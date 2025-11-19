@@ -12,12 +12,14 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
             return;
         }
 
-        // 点赞相关操作不需要管理员权限
-        if ($do === 'like' || $do === 'getLikes') {
+        // 点赞和评论相关操作不需要管理员权限
+        if ($do === 'like' || $do === 'getLikes' || $do === 'addComment') {
             if ($do === 'like') {
                 $this->toggleLike();
             } else if ($do === 'getLikes') {
                 $this->getLikes();
+            } else if ($do === 'addComment') {
+                $this->addComment();
             }
             return;
         }
@@ -95,25 +97,62 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
         $prefix = $db->getPrefix();
         $user = Typecho_Widget::widget('Widget_User');
 
-        // 获取用户ID和IP
+        // 获取用户信息
         $uid = $user->hasLogin() ? $user->uid : null;
         $ip = $this->request->getIp();
+        $anonymousId = $request->get('anonymous_id');
         $currentTime = time();
+        $author = null;
+        $mail = null;
+
+        // 如果用户已登录，获取用户信息
+        if ($uid) {
+            $author = $user->screenName;
+            $mail = $user->mail;
+        } else {
+            // 未登录用户，尝试从评论记录中查找用户信息
+            $userInfo = $this->getUserInfoFromComments($ip);
+            if ($userInfo) {
+                $author = $userInfo['author'];
+                $mail = $userInfo['mail'];
+            }
+        }
 
         try {
             // 检查用户是否已经点赞
-            $where = "cid = {$cid}";
+            $query = $db->select()->from('table.icefox_likes')->where('cid = ?', $cid);
+
             if ($uid) {
-                $where .= " AND uid = {$uid}";
+                // 登录用户：通过 uid 识别
+                $query->where('uid = ?', $uid);
+            } elseif ($mail) {
+                // 评论过的用户：通过 mail 识别
+                $query->where('mail = ?', $mail);
+            } elseif ($anonymousId) {
+                // 完全匿名用户：通过 anonymous_id 识别
+                $query->where('anonymous_id = ?', $anonymousId);
             } else {
-                $where .= " AND ip = '{$ip}'";
+                // 降级方案：通过 IP 识别（不推荐）
+                $query->where('ip = ?', $ip)->where('mail IS NULL')->where('anonymous_id IS NULL');
             }
 
-            $liked = $db->fetchRow($db->select()->from('table.icefox_likes')->where($where));
+            $liked = $db->fetchRow($query);
 
             if ($liked) {
                 // 已点赞，执行取消点赞
-                $db->query($db->delete('table.icefox_likes')->where($where));
+                $deleteQuery = $db->delete('table.icefox_likes')->where('cid = ?', $cid);
+
+                if ($uid) {
+                    $deleteQuery->where('uid = ?', $uid);
+                } elseif ($mail) {
+                    $deleteQuery->where('mail = ?', $mail);
+                } elseif ($anonymousId) {
+                    $deleteQuery->where('anonymous_id = ?', $anonymousId);
+                } else {
+                    $deleteQuery->where('ip = ?', $ip)->where('mail IS NULL')->where('anonymous_id IS NULL');
+                }
+
+                $db->query($deleteQuery);
 
                 // 减少点赞数
                 $db->query("UPDATE `{$prefix}icefox_archive` SET likes = GREATEST(likes - 1, 0) WHERE cid = {$cid}");
@@ -125,7 +164,10 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
                 $data = [
                     'cid' => $cid,
                     'uid' => $uid,
+                    'author' => $author,
+                    'mail' => $mail,
                     'ip' => $ip,
+                    'anonymous_id' => $anonymousId,
                     'created_at' => $currentTime
                 ];
                 $db->query($db->insert('table.icefox_likes')->rows($data));
@@ -140,19 +182,78 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
                 $message = '点赞成功';
             }
 
-            // 获取最新点赞数
+            // 获取最新点赞数和点赞用户列表
             $archive = $db->fetchRow($db->select('likes')->from('table.icefox_archive')->where('cid = ?', $cid));
             $likes = $archive ? $archive['likes'] : 0;
+
+            // 获取点赞用户列表
+            $likeUsers = $this->getLikeUsers($cid);
 
             $this->returnJson([
                 'success' => true,
                 'message' => $message,
                 'isLiked' => $isLiked,
-                'likes' => $likes
+                'likes' => $likes,
+                'likeUsers' => $likeUsers
             ]);
         } catch (Exception $e) {
             $this->returnJson(['success' => false, 'message' => '操作失败：' . $e->getMessage()]);
         }
+    }
+
+    /**
+     * 从评论记录中查找用户信息
+     */
+    private function getUserInfoFromComments($ip) {
+        $db = Typecho_Db::get();
+        $prefix = $db->getPrefix();
+
+        // 验证并转义IP地址防止SQL注入
+        $ip = filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '';
+        if (empty($ip)) {
+            return null;
+        }
+
+        // 使用 addslashes 转义（适用于 MySQL）
+        $ip = addslashes($ip);
+
+        // 通过IP查找最近的评论记录，使用原生SQL避免查询构造器的问题
+        $sql = "SELECT `author`, `mail` FROM `{$prefix}comments`
+                WHERE `ip` = '{$ip}'
+                AND `mail` IS NOT NULL
+                AND `mail` != ''
+                ORDER BY `created` DESC
+                LIMIT 1";
+
+        $comment = $db->fetchRow($sql);
+
+        return $comment;
+    }
+
+    /**
+     * 获取点赞用户列表
+     */
+    private function getLikeUsers($cid) {
+        $db = Typecho_Db::get();
+
+        $likes = $db->fetchAll(
+            $db->select('author', 'mail', 'created_at')
+                ->from('table.icefox_likes')
+                ->where('cid = ?', $cid)
+                ->order('created_at', Typecho_Db::SORT_DESC)
+        );
+
+        $users = [];
+        foreach ($likes as $like) {
+            if (!empty($like['author'])) {
+                $users[] = [
+                    'author' => $like['author'],
+                    'mail' => $like['mail']
+                ];
+            }
+        }
+
+        return $users;
     }
 
     /**
@@ -177,21 +278,109 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
         // 检查当前用户是否已点赞
         $uid = $user->hasLogin() ? $user->uid : null;
         $ip = $this->request->getIp();
+        $anonymousId = $request->get('anonymous_id');
+        $mail = null;
 
-        $where = "cid = {$cid}";
-        if ($uid) {
-            $where .= " AND uid = {$uid}";
-        } else {
-            $where .= " AND ip = '{$ip}'";
+        // 如果未登录，尝试从评论获取邮箱
+        if (!$uid) {
+            $userInfo = $this->getUserInfoFromComments($ip);
+            if ($userInfo) {
+                $mail = $userInfo['mail'];
+            }
         }
 
-        $liked = $db->fetchRow($db->select()->from('table.icefox_likes')->where($where));
+        $query = $db->select()->from('table.icefox_likes')->where('cid = ?', $cid);
+
+        if ($uid) {
+            $query->where('uid = ?', $uid);
+        } elseif ($mail) {
+            $query->where('mail = ?', $mail);
+        } elseif ($anonymousId) {
+            $query->where('anonymous_id = ?', $anonymousId);
+        } else {
+            $query->where('ip = ?', $ip)->where('mail IS NULL')->where('anonymous_id IS NULL');
+        }
+
+        $liked = $db->fetchRow($query);
+
+        // 获取点赞用户列表
+        $likeUsers = $this->getLikeUsers($cid);
 
         $this->returnJson([
             'success' => true,
             'likes' => $likes,
-            'isLiked' => !empty($liked)
+            'isLiked' => !empty($liked),
+            'likeUsers' => $likeUsers
         ]);
+    }
+
+    /**
+     * 添加评论
+     */
+    private function addComment() {
+        $request = Typecho_Request::getInstance();
+
+        // 获取POST数据
+        $input = file_get_contents('php://input');
+        $data = json_decode($input, true);
+
+        if (!$data) {
+            $this->returnJson(['success' => false, 'message' => '无效的请求数据']);
+            return;
+        }
+
+        // 验证必要字段
+        $author = isset($data['author']) ? trim($data['author']) : '';
+        $mail = isset($data['mail']) ? trim($data['mail']) : '';
+        $text = isset($data['text']) ? trim($data['text']) : '';
+        $cid = isset($data['cid']) ? intval($data['cid']) : 0;
+        $coid = isset($data['coid']) ? intval($data['coid']) : 0;
+        $url = isset($data['url']) ? trim($data['url']) : '';
+
+        if (empty($author) || empty($mail) || empty($text) || empty($cid)) {
+            $this->returnJson(['success' => false, 'message' => '请填写必要信息']);
+            return;
+        }
+
+        // 验证邮箱格式
+        if (!filter_var($mail, FILTER_VALIDATE_EMAIL)) {
+            $this->returnJson(['success' => false, 'message' => '邮箱格式不正确']);
+            return;
+        }
+
+        $db = Typecho_Db::get();
+        $ip = $this->request->getIp();
+        $agent = $this->request->getAgent();
+        $currentTime = time();
+
+        try {
+            // 插入评论数据
+            $comment = [
+                'cid' => $cid,
+                'created' => $currentTime,
+                'author' => $author,
+                'authorId' => 0,
+                'ownerId' => 0,
+                'mail' => $mail,
+                'url' => $url,
+                'ip' => $ip,
+                'agent' => $agent,
+                'text' => $text,
+                'type' => 'comment',
+                'status' => 'approved', // 可以改为 'waiting' 需要审核
+                'parent' => $coid
+            ];
+
+            $insertId = $db->query($db->insert('table.comments')->rows($comment));
+
+            $this->returnJson([
+                'success' => true,
+                'message' => '评论发表成功',
+                'commentId' => $insertId
+            ]);
+        } catch (Exception $e) {
+            $this->returnJson(['success' => false, 'message' => '评论发表失败：' . $e->getMessage()]);
+        }
     }
 
     /**

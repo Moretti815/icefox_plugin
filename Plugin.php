@@ -152,15 +152,41 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
             `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
             `cid` int(10) unsigned NOT NULL, -- 文章Id
             `uid` int(10) unsigned DEFAULT NULL, -- 用户Id（登录用户）
-            `ip` varchar(45) DEFAULT NULL, -- IP地址（匿名用户）
+            `author` varchar(150) DEFAULT NULL, -- 用户昵称
+            `mail` varchar(200) DEFAULT NULL, -- 用户邮箱
+            `ip` varchar(45) DEFAULT NULL, -- IP地址
+            `anonymous_id` varchar(64) DEFAULT NULL, -- 匿名用户唯一标识
             `created_at` int(10) unsigned NOT NULL, -- 点赞时间
             PRIMARY KEY (`id`),
-            UNIQUE KEY `unique_like` (`cid`, `uid`, `ip`), -- 确保同一用户/IP只能点赞一次
             KEY `idx_cid` (`cid`),
+            KEY `idx_mail_ip` (`mail`, `ip`),
+            KEY `idx_anonymous` (`anonymous_id`),
             FOREIGN KEY (`cid`) REFERENCES `{$prefix}contents`(`cid`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
         $db->query($sql);
+
+        // 检查是否需要添加新字段（用于已有数据库升级）
+        $columns = $db->fetchAll($db->query("SHOW COLUMNS FROM `{$prefix}icefox_likes`"));
+        $columnNames = array_column($columns, 'Field');
+
+        if (!in_array('author', $columnNames)) {
+            $db->query("ALTER TABLE `{$prefix}icefox_likes` ADD COLUMN `author` varchar(150) DEFAULT NULL AFTER `uid`");
+        }
+        if (!in_array('mail', $columnNames)) {
+            $db->query("ALTER TABLE `{$prefix}icefox_likes` ADD COLUMN `mail` varchar(200) DEFAULT NULL AFTER `author`");
+        }
+        if (!in_array('anonymous_id', $columnNames)) {
+            $db->query("ALTER TABLE `{$prefix}icefox_likes` ADD COLUMN `anonymous_id` varchar(64) DEFAULT NULL AFTER `ip`");
+            $db->query("ALTER TABLE `{$prefix}icefox_likes` ADD KEY `idx_anonymous` (`anonymous_id`)");
+        }
+
+        // 删除旧的唯一索引，因为现在通过邮箱和IP来识别
+        // 先检查索引是否存在
+        $indexes = $db->fetchAll($db->query("SHOW INDEX FROM `{$prefix}icefox_likes` WHERE Key_name = 'unique_like'"));
+        if (!empty($indexes)) {
+            $db->query("ALTER TABLE `{$prefix}icefox_likes` DROP INDEX `unique_like`");
+        }
     }
 
     /**
