@@ -373,10 +373,19 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
 
             $insertId = $db->query($db->insert('table.comments')->rows($comment));
 
+            // 返回评论信息用于前端展示
             $this->returnJson([
                 'success' => true,
                 'message' => '评论发表成功',
-                'commentId' => $insertId
+                'comment' => [
+                    'coid' => $insertId,
+                    'author' => $author,
+                    'mail' => $mail,
+                    'url' => $url,
+                    'text' => $text,
+                    'created' => $currentTime,
+                    'parent' => $coid
+                ]
             ]);
         } catch (Exception $e) {
             $this->returnJson(['success' => false, 'message' => '评论发表失败：' . $e->getMessage()]);
