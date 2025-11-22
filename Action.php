@@ -414,8 +414,9 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
         // 获取表单数据
         $content = $request->get('content', '');
         $position = $request->get('position', '');
+        $positionUrl = $request->get('positionUrl', '');
         $visibility = $request->get('visibility', 'public');
-        $isAd = $request->get('isAd', '0') === '1' ? 1 : 0;
+        $isAdvertise = $request->get('isAdvertise', '0') === '1' ? 1 : 0;
 
         // 验证内容
         $hasMedia = false;
@@ -481,8 +482,11 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
             if (!empty($position)) {
                 $this->savePostField($insertId, 'position', 'str', $position);
             }
-            if ($isAd) {
-                $this->savePostField($insertId, 'isAd', 'int', 1);
+            if (!empty($positionUrl)) {
+                $this->savePostField($insertId, 'positionUrl', 'str', $positionUrl);
+            }
+            if ($isAdvertise) {
+                $this->savePostField($insertId, 'isAdvertise', 'int', 1);
             }
 
             // 保存上传的文件记录
