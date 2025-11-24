@@ -12,14 +12,18 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
             return;
         }
 
-        // 点赞和评论相关操作不需要管理员权限
-        if ($do === 'like' || $do === 'getLikes' || $do === 'addComment') {
+        // 点赞、评论和游戏相关操作不需要管理员权限
+        if ($do === 'like' || $do === 'getLikes' || $do === 'addComment' || $do === 'saveGameScore' || $do === 'getGameLeaderboard') {
             if ($do === 'like') {
                 $this->toggleLike();
             } else if ($do === 'getLikes') {
                 $this->getLikes();
             } else if ($do === 'addComment') {
                 $this->addComment();
+            } else if ($do === 'saveGameScore') {
+                $this->saveGameScore();
+            } else if ($do === 'getGameLeaderboard') {
+                $this->getGameLeaderboard();
             }
             return;
         }
@@ -698,6 +702,278 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
 
             $db->query($db->insert('table.contents')->rows($attachmentData));
         }
+    }
+
+    /**
+     * 保存游戏分数
+     */
+    private function saveGameScore() {
+        $request = Typecho_Request::getInstance();
+        $db = Typecho_Db::get();
+        $prefix = $db->getPrefix();
+
+        // 获取参数
+        $name = trim($request->get('name'));
+        $email = trim($request->get('email'));
+        $score = intval($request->get('score'));
+        $gameTime = intval($request->get('gameTime')); // 游戏时长（秒）
+        $checkpoints = trim($request->get('checkpoints')); // 关键检查点数据
+        $signature = trim($request->get('signature')); // 签名
+        $ip = $this->request->getIp();
+
+        // 验证参数
+        if (empty($name)) {
+            $this->returnJson(['success' => false, 'message' => '昵称不能为空']);
+            return;
+        }
+
+        if (empty($email)) {
+            $this->returnJson(['success' => false, 'message' => '邮箱不能为空']);
+            return;
+        }
+
+        // 验证邮箱格式
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $this->returnJson(['success' => false, 'message' => '邮箱格式不正确']);
+            return;
+        }
+
+        if ($score <= 0) {
+            $this->returnJson(['success' => false, 'message' => '分数必须大于0']);
+            return;
+        }
+
+        // 防作弊验证
+        $validationResult = $this->validateGameScore($score, $gameTime, $checkpoints, $signature);
+        if (!$validationResult['valid']) {
+            $this->returnJson(['success' => false, 'message' => $validationResult['message']]);
+            return;
+        }
+
+        // 检查同一IP的更新频率限制（3秒内不能重复提交）
+        $existingRecord = $db->fetchRow(
+            $db->select()
+                ->from($prefix . 'icefox_game_leaderboard')
+                ->where('email = ?', $email)
+        );
+
+        $currentTime = time();
+
+        if ($existingRecord) {
+            // 检查IP更新频率限制
+            if ($existingRecord['ip'] === $ip) {
+                $timeDiff = $currentTime - $existingRecord['updated_at'];
+                if ($timeDiff < 3) {
+                    $this->returnJson(['success' => false, 'message' => '提交太频繁，请' . (3 - $timeDiff) . '秒后再试']);
+                    return;
+                }
+            }
+
+            // 更新现有记录（覆盖昵称和分数）
+            $db->query(
+                $db->update($prefix . 'icefox_game_leaderboard')
+                    ->rows([
+                        'name' => $name,
+                        'score' => $score,
+                        'ip' => $ip,
+                        'updated_at' => $currentTime
+                    ])
+                    ->where('email = ?', $email)
+            );
+
+            $this->returnJson(['success' => true, 'message' => '成绩已更新', 'action' => 'updated']);
+        } else {
+            // 插入新记录
+            $db->query(
+                $db->insert($prefix . 'icefox_game_leaderboard')
+                    ->rows([
+                        'name' => $name,
+                        'email' => $email,
+                        'score' => $score,
+                        'ip' => $ip,
+                        'created_at' => $currentTime,
+                        'updated_at' => $currentTime
+                    ])
+            );
+
+            $this->returnJson(['success' => true, 'message' => '成绩已保存', 'action' => 'created']);
+        }
+    }
+
+    /**
+     * 获取游戏排行榜
+     */
+    private function getGameLeaderboard() {
+        $request = Typecho_Request::getInstance();
+        $db = Typecho_Db::get();
+        $prefix = $db->getPrefix();
+
+        // 获取参数
+        $limit = intval($request->get('limit', 10));
+        if ($limit <= 0 || $limit > 100) {
+            $limit = 10;
+        }
+
+        // 查询排行榜
+        $leaderboard = $db->fetchAll(
+            $db->select('name', 'score', 'updated_at')
+                ->from($prefix . 'icefox_game_leaderboard')
+                ->order('score', Typecho_Db::SORT_DESC)
+                ->limit($limit)
+        );
+
+        $this->returnJson([
+            'success' => true,
+            'data' => $leaderboard
+        ]);
+    }
+
+    /**
+     * 验证游戏分数（防作弊）
+     */
+    private function validateGameScore($score, $gameTime, $checkpoints, $signature) {
+        // 1. 验证游戏时长合理性
+        // 假设平均速度2，每100ms增加2分，即每秒20分
+        // 最小时长 = 分数 / 30（考虑速度增加，放宽到30）
+        $minGameTime = $score / 30;
+        if ($gameTime < $minGameTime) {
+            return [
+                'valid' => false,
+                'message' => '游戏时间异常，请正常游戏'
+            ];
+        }
+
+        // 2. 验证分数上限（防止异常高分）
+        // 假设游戏最多玩10分钟，速度最高5倍，每秒最多100分
+        $maxPossibleScore = 10 * 60 * 100;
+        if ($score > $maxPossibleScore) {
+            return [
+                'valid' => false,
+                'message' => '分数异常，超出合理范围'
+            ];
+        }
+
+        // 3. 验证检查点数据
+        if (empty($checkpoints)) {
+            return [
+                'valid' => false,
+                'message' => '游戏数据不完整'
+            ];
+        }
+
+        // 解析检查点数据（格式：距离:时间戳,距离:时间戳,...）
+        $checkpointArray = explode(',', $checkpoints);
+
+        // 根据分数动态要求检查点数量
+        // 分数 < 100: 至少1个检查点
+        // 分数 >= 100: 至少2个检查点
+        // 分数 >= 200: 至少3个检查点
+        $requiredCheckpoints = 1;
+        if ($score >= 100) {
+            $requiredCheckpoints = 2;
+        }
+        if ($score >= 200) {
+            $requiredCheckpoints = 3;
+        }
+
+        if (count($checkpointArray) < $requiredCheckpoints) {
+            return [
+                'valid' => false,
+                'message' => '游戏数据不完整'
+            ];
+        }
+
+        // 验证检查点的距离递增性
+        $lastDistance = 0;
+        $validCheckpoints = 0;
+        foreach ($checkpointArray as $checkpoint) {
+            $parts = explode(':', $checkpoint);
+            if (count($parts) != 2) continue;
+
+            $distance = intval($parts[0]);
+            if ($distance <= $lastDistance) {
+                return [
+                    'valid' => false,
+                    'message' => '游戏数据异常'
+                ];
+            }
+            $lastDistance = $distance;
+            $validCheckpoints++;
+        }
+
+        // 确保有足够的有效检查点
+        if ($validCheckpoints < $requiredCheckpoints) {
+            return [
+                'valid' => false,
+                'message' => '游戏数据不完整'
+            ];
+        }
+
+        // 验证最后检查点距离与提交分数的差距
+        // 对于低分(<200)放宽容差,因为检查点间隔较大
+        $tolerance = $score < 200 ? 200 : 150;
+        if (abs($lastDistance - $score) > $tolerance) {
+            return [
+                'valid' => false,
+                'message' => '分数数据不一致'
+            ];
+        }
+
+        // 4. 验证签名
+        $expectedSignature = $this->generateGameSignature($score, $gameTime, $checkpoints);
+        if ($signature !== $expectedSignature) {
+            return [
+                'valid' => false,
+                'message' => '数据签名验证失败'
+            ];
+        }
+
+        return ['valid' => true];
+    }
+
+    /**
+     * 生成游戏签名（与前端算法一致）
+     */
+    private function generateGameSignature($score, $gameTime, $checkpoints) {
+        $data = $score . '|' . $gameTime . '|' . $checkpoints;
+        return $this->customHash($data);
+    }
+
+    /**
+     * 自定义哈希函数（与前端JavaScript实现一致）
+     */
+    private function customHash($str) {
+        $secretKey = 'icefox_game_secret_key_2024';
+        $data = $str . $secretKey;
+        $hash = 0;
+
+        // 第一轮哈希
+        for ($i = 0; $i < strlen($data); $i++) {
+            $char = ord($data[$i]);
+            $hash = (($hash << 5) - $hash) + $char;
+            $hash = $hash & 0xFFFFFFFF; // 转换为32位整数
+        }
+
+        // 转换为正数并转16进制
+        $hash = abs($hash);
+        $hashStr = dechex($hash);
+
+        // 添加额外的混淆（与前端保持一致）
+        for ($i = 0; $i < strlen($data); $i += 7) {
+            $chunk = substr($data, $i, 7);
+            $chunkHash = 0;
+            for ($j = 0; $j < strlen($chunk); $j++) {
+                $chunkHash = (($chunkHash << 3) - $chunkHash) + ord($chunk[$j]);
+                $chunkHash = $chunkHash & 0xFFFFFFFF;
+            }
+            $hashStr .= dechex(abs($chunkHash));
+        }
+
+        // 确保长度一致
+        $hashStr = substr($hashStr, 0, 64);
+        $hashStr = str_pad($hashStr, 64, '0', STR_PAD_RIGHT);
+
+        return $hashStr;
     }
 
     /**

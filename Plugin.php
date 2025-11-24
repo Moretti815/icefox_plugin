@@ -191,6 +191,23 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
         if (!empty($indexes)) {
             $db->query("ALTER TABLE `{$prefix}icefox_likes` DROP INDEX `unique_like`");
         }
+
+        // 创建游戏排行榜表
+        $sql = "CREATE TABLE IF NOT EXISTS `{$prefix}icefox_game_leaderboard` (
+            `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+            `name` varchar(50) NOT NULL, -- 昵称
+            `email` varchar(200) NOT NULL, -- 邮箱（唯一标识）
+            `score` int(10) unsigned NOT NULL DEFAULT '0', -- 分数
+            `ip` varchar(45) DEFAULT NULL, -- IP地址
+            `created_at` int(10) unsigned NOT NULL, -- 首次创建时间
+            `updated_at` int(10) unsigned NOT NULL, -- 最后更新时间
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `unique_email` (`email`),
+            KEY `idx_score` (`score` DESC),
+            KEY `idx_ip_updated` (`ip`, `updated_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
+        $db->query($sql);
     }
 
     /**
