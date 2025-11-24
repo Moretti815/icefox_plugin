@@ -46,6 +46,9 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
             \Helper::addRoute('icefox_route','/action/icefox', 'Icefox_Action', 'action');
         }
 
+        // 注册首页置顶功能钩子
+        Typecho_Plugin::factory('Widget_Archive')->indexHandle = array(__CLASS__, 'indexHandle');
+
         if (file_exists("admin/manage-posts.php")) {
             rename("admin/manage-posts.php", "admin/manage-posts.php.bak");
             // if(version_compare(Common::VERSION,'1.2.0') >=0){
@@ -194,20 +197,43 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
      */
     public static function AdminPostResetAlloc($parameter){
         $db = Typecho_Db::get();
-        
+
         // 执行原生SQL查询
         $query = $db->select()->from('table.contents')
             ->where('type = ?', 'post')
             ->order('cid', Typecho_Db::SORT_DESC);
-        
+
         // 创建自定义Widget实例
         $widget = new Widget_Contents_Post_Admin($parameter, $query);
-        
+
         // 保持分页功能
         if (isset($parameter->pageSize)) {
             $widget->pageSize = $parameter->pageSize;
         }
-        
+
         return $widget;
+    }
+
+    /**
+     * 首页文章列表置顶功能
+     *
+     * @param Widget_Archive $archive
+     * @param Typecho_Db_Query $select
+     */
+    public static function indexHandle($archive, $select)
+    {
+        $db = Typecho_Db::get();
+        $prefix = $db->getPrefix();
+
+        // 关联 icefox_archive 表
+        $select->join(
+            $prefix . 'icefox_archive',
+            $prefix . 'contents.cid = ' . $prefix . 'icefox_archive.cid',
+            Typecho_Db::LEFT_JOIN
+        );
+
+        // 清除原有排序,重新按置顶和时间排序
+        $select->order('COALESCE(' . $prefix . 'icefox_archive.is_top, 0)', Typecho_Db::SORT_DESC)
+               ->order($prefix . 'contents.created', Typecho_Db::SORT_DESC);
     }
 }
