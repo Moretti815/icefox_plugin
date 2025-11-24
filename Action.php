@@ -111,39 +111,66 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
         $uid = $user->hasLogin() ? $user->uid : null;
         $ip = $this->request->getIp();
         $anonymousId = $request->get('anonymous_id');
+        $commentAuthor = $request->get('comment_author'); // 评论用户昵称
+        $commentEmail = $request->get('comment_email'); // 评论用户邮箱
         $currentTime = time();
         $author = null;
         $mail = null;
 
-        // 如果用户已登录，获取用户信息
+        // 判断用户身份：登录用户 > 评论用户 > 匿名用户
         if ($uid) {
+            // 已登录用户
             $author = $user->screenName;
             $mail = $user->mail;
-        } else {
-            // 未登录用户，尝试从评论记录中查找用户信息
-            $userInfo = $this->getUserInfoFromComments($ip);
-            if ($userInfo) {
-                $author = $userInfo['author'];
-                $mail = $userInfo['mail'];
-            }
+        } elseif ($commentAuthor && $commentEmail) {
+            // 已评论用户(有昵称和邮箱)
+            $author = $commentAuthor;
+            $mail = $commentEmail;
         }
+        // 纯匿名用户不保存 author 和 mail，只保存 anonymous_id
 
         try {
+            // 特殊处理：如果是评论用户,检查是否需要升级匿名点赞记录
+            if ($commentEmail && $anonymousId) {
+                // 检查是否存在该匿名ID的点赞记录(且没有邮箱信息)
+                $anonymousLike = $db->fetchRow(
+                    $db->select()->from('table.icefox_likes')
+                        ->where('cid = ?', $cid)
+                        ->where('anonymous_id = ?', $anonymousId)
+                        ->where('mail IS NULL OR mail = ?', '')
+                );
+
+                if ($anonymousLike) {
+                    // 升级匿名点赞记录：添加用户信息,清除anonymous_id
+                    $db->query(
+                        $db->update('table.icefox_likes')
+                            ->rows([
+                                'author' => $author,
+                                'mail' => $mail,
+                                'anonymous_id' => null  // 清除匿名ID,避免身份混乱
+                            ])
+                            ->where('cid = ?', $cid)
+                            ->where('anonymous_id = ?', $anonymousId)
+                    );
+                }
+            }
+
             // 检查用户是否已经点赞
             $query = $db->select()->from('table.icefox_likes')->where('cid = ?', $cid);
 
             if ($uid) {
-                // 登录用户：通过 uid 识别
+                // 已登录用户：通过 uid 识别
                 $query->where('uid = ?', $uid);
-            } elseif ($mail) {
-                // 评论过的用户：通过 mail 识别
-                $query->where('mail = ?', $mail);
+            } elseif ($commentEmail) {
+                // 已评论用户：通过邮箱识别
+                $query->where('mail = ?', $commentEmail);
             } elseif ($anonymousId) {
-                // 完全匿名用户：通过 anonymous_id 识别
+                // 匿名用户：通过 anonymous_id 识别
                 $query->where('anonymous_id = ?', $anonymousId);
             } else {
-                // 降级方案：通过 IP 识别（不推荐）
-                $query->where('ip = ?', $ip)->where('mail IS NULL')->where('anonymous_id IS NULL');
+                // 无任何识别信息：不允许操作
+                $this->returnJson(['success' => false, 'message' => '请刷新页面后重试']);
+                return;
             }
 
             $liked = $db->fetchRow($query);
@@ -154,12 +181,10 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
 
                 if ($uid) {
                     $deleteQuery->where('uid = ?', $uid);
-                } elseif ($mail) {
-                    $deleteQuery->where('mail = ?', $mail);
+                } elseif ($commentEmail) {
+                    $deleteQuery->where('mail = ?', $commentEmail);
                 } elseif ($anonymousId) {
                     $deleteQuery->where('anonymous_id = ?', $anonymousId);
-                } else {
-                    $deleteQuery->where('ip = ?', $ip)->where('mail IS NULL')->where('anonymous_id IS NULL');
                 }
 
                 $db->query($deleteQuery);
@@ -177,7 +202,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
                     'author' => $author,
                     'mail' => $mail,
                     'ip' => $ip,
-                    'anonymous_id' => $anonymousId,
+                    'anonymous_id' => ($commentEmail ? null : $anonymousId), // 评论用户不保存anonymous_id
                     'created_at' => $currentTime
                 ];
                 $db->query($db->insert('table.icefox_likes')->rows($data));
@@ -287,28 +312,31 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
 
         // 检查当前用户是否已点赞
         $uid = $user->hasLogin() ? $user->uid : null;
-        $ip = $this->request->getIp();
+        $commentEmail = $request->get('comment_email'); // 评论用户邮箱
         $anonymousId = $request->get('anonymous_id');
-        $mail = null;
-
-        // 如果未登录，尝试从评论获取邮箱
-        if (!$uid) {
-            $userInfo = $this->getUserInfoFromComments($ip);
-            if ($userInfo) {
-                $mail = $userInfo['mail'];
-            }
-        }
 
         $query = $db->select()->from('table.icefox_likes')->where('cid = ?', $cid);
 
         if ($uid) {
+            // 已登录用户：通过 uid 识别
             $query->where('uid = ?', $uid);
-        } elseif ($mail) {
-            $query->where('mail = ?', $mail);
+        } elseif ($commentEmail) {
+            // 已评论用户：通过邮箱识别
+            $query->where('mail = ?', $commentEmail);
         } elseif ($anonymousId) {
+            // 匿名用户：通过 anonymous_id 识别
             $query->where('anonymous_id = ?', $anonymousId);
         } else {
-            $query->where('ip = ?', $ip)->where('mail IS NULL')->where('anonymous_id IS NULL');
+            // 无任何识别信息：视为新用户，不匹配任何点赞记录
+            $liked = null;
+            $likeUsers = $this->getLikeUsers($cid);
+            $this->returnJson([
+                'success' => true,
+                'likes' => $likes,
+                'isLiked' => false,
+                'likeUsers' => $likeUsers
+            ]);
+            return;
         }
 
         $liked = $db->fetchRow($query);
