@@ -34,9 +34,10 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
         if(version_compare(Common::VERSION,'1.2.0') < 0){
             throw new Exception('请更新typecho到 1.2.0 以上');
         }
-        // Plugin::factory('admin/header.php')->header_1011 = array('IceDog_Plugin', 'renderHeader');
-        // Plugin::factory('admin/footer.php')->end_1011 = array('IceDog_Plugin', 'renderFooter');
-        
+        // 添加后台头部钩子,加载视频按钮脚本
+        Plugin::factory('admin/write-post.php')->bottom = array('Icefox_Plugin', 'addVideoScript');
+        Plugin::factory('admin/write-page.php')->bottom = array('Icefox_Plugin', 'addVideoScript');
+
         self::checkAndCreateTable();
 
         // 注册接口路由
@@ -236,4 +237,28 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
         $select->order('COALESCE(' . $prefix . 'icefox_archive.is_top, 0)', Typecho_Db::SORT_DESC)
                ->order($prefix . 'contents.created', Typecho_Db::SORT_DESC);
     }
+
+    /**
+     * 添加视频插入脚本
+     */
+    public static function addVideoScript()
+    {
+        $pluginUrl = \Typecho\Common::url('usr/plugins/icefox/admin/video-button.js', \Typecho\Widget::widget('Widget_Options')->siteUrl);
+        ?>
+        <script src="<?php echo $pluginUrl; ?>?v=<?php echo time(); ?>"></script>
+        <style>
+        #wmd-video-button {
+            left: 325px !important;
+        }
+        #wmd-video-button svg {
+            width: 20px;
+            height: 20px;
+        }
+        #wmd-video-button:hover {
+            opacity: 0.8;
+        }
+        </style>
+        <?php
+    }
 }
+
