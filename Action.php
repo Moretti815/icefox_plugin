@@ -49,6 +49,26 @@ class Action extends Widget implements ActionInterface {
             return;
         }
 
+        // 获取点赞记录列表（需要管理员权限）
+        if ($do === 'getLikeRecords') {
+            if (!$user->pass('administrator')) {
+                $this->returnJson(['success' => false, 'message' => '无权操作']);
+                return;
+            }
+            $this->getLikeRecords();
+            return;
+        }
+
+        // 删除单条点赞记录（需要管理员权限）
+        if ($do === 'deleteLikeRecord') {
+            if (!$user->pass('administrator')) {
+                $this->returnJson(['success' => false, 'message' => '无权操作']);
+                return;
+            }
+            $this->deleteLikeRecord();
+            return;
+        }
+
         // 发布文章需要登录但不需要管理员权限
         if ($do === 'createPost') {
             if (!$user->hasLogin()) {
@@ -1080,6 +1100,130 @@ class Action extends Widget implements ActionInterface {
             $this->returnJson([
                 'success' => true,
                 'message' => '友情链接「' . $link['name'] . '」已删除'
+            ]);
+        } catch (\Exception $e) {
+            $this->returnJson([
+                'success' => false,
+                'message' => '删除失败：' . $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 获取文章点赞记录列表（支持分页）
+     */
+    private function getLikeRecords() {
+        $request = Request::getInstance();
+        $db = Db::get();
+        $prefix = $db->getPrefix();
+
+        $cid = intval($request->get('cid'));
+        $page = intval($request->get('page', 1));
+        $pageSize = intval($request->get('pageSize', 10));
+
+        if (empty($cid)) {
+            $this->returnJson(['success' => false, 'message' => '文章ID缺失']);
+            return;
+        }
+
+        if ($page < 1) $page = 1;
+        if ($pageSize < 1 || $pageSize > 100) $pageSize = 10;
+
+        $offset = ($page - 1) * $pageSize;
+
+        try {
+            // 获取总数
+            $totalResult = $db->fetchRow(
+                $db->select('COUNT(*) as total')
+                    ->from($prefix . 'icefox_likes')
+                    ->where('cid = ?', $cid)
+            );
+            $total = $totalResult ? intval($totalResult['total']) : 0;
+            $totalPages = ceil($total / $pageSize);
+
+            // 获取分页数据
+            $records = $db->fetchAll(
+                $db->select('id', 'author', 'mail', 'ip', 'created_at')
+                    ->from($prefix . 'icefox_likes')
+                    ->where('cid = ?', $cid)
+                    ->order('created_at', Db::SORT_DESC)
+                    ->offset($offset)
+                    ->limit($pageSize)
+            );
+
+            // 格式化数据
+            $data = [];
+            foreach ($records as $record) {
+                $data[] = [
+                    'id' => $record['id'],
+                    'author' => $record['author'] ?: '匿名用户',
+                    'mail' => $record['mail'] ?: '-',
+                    'ip' => $record['ip'] ?: '-',
+                    'created_at' => date('Y-m-d H:i', $record['created_at'])
+                ];
+            }
+
+            $this->returnJson([
+                'success' => true,
+                'data' => $data,
+                'total' => $total,
+                'page' => $page,
+                'pageSize' => $pageSize,
+                'totalPages' => $totalPages
+            ]);
+        } catch (\Exception $e) {
+            $this->returnJson([
+                'success' => false,
+                'message' => '获取点赞记录失败：' . $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 删除单条点赞记录
+     */
+    private function deleteLikeRecord() {
+        $request = Request::getInstance();
+        $db = Db::get();
+        $prefix = $db->getPrefix();
+
+        $id = intval($request->get('id'));
+
+        if (empty($id)) {
+            $this->returnJson(['success' => false, 'message' => '记录ID缺失']);
+            return;
+        }
+
+        try {
+            // 查询记录是否存在，并获取 cid
+            $record = $db->fetchRow(
+                $db->select('id', 'cid', 'author')
+                    ->from($prefix . 'icefox_likes')
+                    ->where('id = ?', $id)
+            );
+
+            if (!$record) {
+                $this->returnJson(['success' => false, 'message' => '记录不存在']);
+                return;
+            }
+
+            $cid = $record['cid'];
+            $author = $record['author'] ?: '匿名用户';
+
+            // 删除点赞记录
+            $db->query(
+                $db->delete($prefix . 'icefox_likes')
+                    ->where('id = ?', $id)
+            );
+
+            // 同步更新 icefox_archive 表的 likes 计数
+            $db->query(
+                "UPDATE `{$prefix}icefox_archive` SET likes = GREATEST(likes - 1, 0) WHERE cid = {$cid}"
+            );
+
+            $this->returnJson([
+                'success' => true,
+                'message' => '已删除「' . $author . '」的点赞记录'
             ]);
         } catch (\Exception $e) {
             $this->returnJson([

@@ -198,19 +198,21 @@ $isAllPosts = ('on' == $request->get('__typecho_all_posts') || 'on' == \Typecho\
                                         </td>
                                         <td>
                                             <?php
-                                                // 查询文章是否已置顶
+                                                // 查询文章是否已置顶和点赞数
                                                 $resultData = $db->fetchRow($db->select('*')->from('table.icefox_archive')->where('cid = ?', $posts->cid));
 												$isTop = false;
 												$topStyle = '';
+												$likesCount = 0;
 												if(!empty($resultData)){
 													$isTop = $resultData['is_top'];
+													$likesCount = intval($resultData['likes']);
 												}
 												if($isTop){
 													$topStyle = 'font-size:12px;color:#FFF;background-color:red;padding:1px 3px;';
 												}
                                                 ?>
 												<a href="<?php $security->index('/action/icefox?do=top&cid='.$posts->cid.'&stat='.$isTop); ?>" style="white-space: nowrap; <?php echo $topStyle;?>"><?php echo $isTop?'取消置顶':'置顶';?></a>
-                                                
+												<span class="show-likes-btn" data-cid="<?php echo $posts->cid; ?>" onclick="showLikesModal(<?php echo $posts->cid; ?>, '<?php echo addslashes(htmlspecialchars($posts->title)); ?>')" style="white-space: nowrap; margin-left:8px; cursor:pointer; color:#467b96;">点赞(<?php echo $likesCount; ?>)</span>
                                         </td>
                                     </tr>
                                 <?php endwhile; ?>
@@ -272,5 +274,351 @@ $isAllPosts = ('on' == $request->get('__typecho_all_posts') || 'on' == \Typecho\
 include 'copyright.php';
 include 'common-js.php';
 include 'table-js.php';
+?>
+
+<!-- 点赞记录弹窗 -->
+<div id="likes-modal" class="typecho-popup" style="display:none;">
+    <div class="typecho-popup-bg" onclick="closeLikesModal()"></div>
+    <div class="typecho-popup-content" style="width:720px;max-width:90%;max-height:80vh;overflow:auto;">
+        <div class="typecho-popup-head">
+            <h3>文章《<span id="likes-modal-title"></span>》的点赞记录</h3>
+            <button class="typecho-popup-close" onclick="closeLikesModal()">&times;</button>
+        </div>
+        <div class="typecho-popup-body" id="likes-modal-body">
+            <div class="loading" style="text-align:center;padding:40px;">加载中...</div>
+        </div>
+        <div class="typecho-popup-foot" id="likes-modal-foot" style="display:none;">
+            <span>共 <strong id="likes-total">0</strong> 条记录</span>
+            <ul class="typecho-pager" id="likes-pager"></ul>
+        </div>
+    </div>
+</div>
+
+<style>
+.typecho-popup {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.typecho-popup-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+}
+.typecho-popup-content {
+    position: relative;
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.typecho-popup-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-bottom: 1px solid #e9e9e9;
+}
+.typecho-popup-head h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+.typecho-popup-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #999;
+    line-height: 1;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+}
+.typecho-popup-close:hover {
+    color: #333;
+}
+.typecho-popup-body {
+    padding: 20px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+.typecho-popup-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-top: 1px solid #e9e9e9;
+    background: #f9f9f9;
+}
+.likes-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.likes-table th,
+.likes-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid #e9e9e9;
+}
+.likes-table th {
+    background: #f5f5f5;
+    font-weight: 600;
+    font-size: 13px;
+    color: #666;
+}
+.likes-table td {
+    font-size: 13px;
+}
+.likes-table tr:hover td {
+    background: #fafafa;
+}
+.likes-delete-btn {
+    color: #c33;
+    cursor: pointer;
+    background: none;
+    border: none;
+    font-size: 13px;
+}
+.likes-delete-btn:hover {
+    color: #a00;
+    text-decoration: underline;
+}
+.likes-delete-btn:disabled {
+    color: #999;
+    cursor: not-allowed;
+}
+.likes-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: #999;
+}
+#likes-pager {
+    display: flex;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+#likes-pager li a,
+#likes-pager li span {
+    display: inline-block;
+    padding: 5px 10px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    text-decoration: none;
+    color: #333;
+    font-size: 12px;
+}
+#likes-pager li a:hover {
+    background: #f5f5f5;
+}
+#likes-pager li.current span {
+    background: #467b96;
+    color: #fff;
+    border-color: #467b96;
+}
+</style>
+
+<script>
+(function() {
+    var currentCid = 0;
+    var currentPage = 1;
+    var pageSize = 10;
+    var apiBase = '<?php echo rtrim($options->index, '/'); ?>/';
+
+    // 显示点赞记录弹窗
+    window.showLikesModal = function(cid, title) {
+        currentCid = cid;
+        currentPage = 1;
+        document.getElementById('likes-modal-title').textContent = title;
+        document.getElementById('likes-modal').style.display = 'flex';
+        document.getElementById('likes-modal-foot').style.display = 'none';
+        loadLikesData();
+    };
+
+    // 关闭弹窗
+    window.closeLikesModal = function() {
+        document.getElementById('likes-modal').style.display = 'none';
+    };
+
+    // 加载点赞数据
+    function loadLikesData() {
+        var body = document.getElementById('likes-modal-body');
+        body.innerHTML = '<div class="loading" style="text-align:center;padding:40px;">加载中...</div>';
+
+        var url = apiBase + 'action/icefox?do=getLikeRecords&cid=' + currentCid + '&page=' + currentPage + '&pageSize=' + pageSize;
+
+        fetch(url)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    renderLikesTable(data);
+                } else {
+                    body.innerHTML = '<div class="likes-empty">' + (data.message || '加载失败') + '</div>';
+                }
+            })
+            .catch(function(err) {
+                body.innerHTML = '<div class="likes-empty">网络错误，请重试</div>';
+            });
+    }
+
+    // 渲染表格
+    function renderLikesTable(data) {
+        var body = document.getElementById('likes-modal-body');
+        var foot = document.getElementById('likes-modal-foot');
+
+        if (data.data.length === 0) {
+            body.innerHTML = '<div class="likes-empty">暂无点赞记录</div>';
+            foot.style.display = 'none';
+            return;
+        }
+
+        var html = '<table class="likes-table">';
+        html += '<thead><tr><th>昵称</th><th>邮箱</th><th>IP</th><th>点赞时间</th><th>操作</th></tr></thead>';
+        html += '<tbody>';
+
+        data.data.forEach(function(item) {
+            html += '<tr data-id="' + item.id + '">';
+            html += '<td>' + escapeHtml(item.author) + '</td>';
+            html += '<td>' + escapeHtml(item.mail) + '</td>';
+            html += '<td>' + escapeHtml(item.ip) + '</td>';
+            html += '<td>' + escapeHtml(item.created_at) + '</td>';
+            html += '<td><button class="likes-delete-btn" onclick="deleteLikeRecord(' + item.id + ', this)">删除</button></td>';
+            html += '</tr>';
+        });
+
+        html += '</tbody></table>';
+        body.innerHTML = html;
+
+        // 更新分页
+        document.getElementById('likes-total').textContent = data.total;
+        foot.style.display = 'flex';
+        renderPager(data.page, data.totalPages);
+    }
+
+    // 渲染分页
+    function renderPager(page, totalPages) {
+        var pager = document.getElementById('likes-pager');
+        var html = '';
+
+        if (page > 1) {
+            html += '<li><a href="javascript:;" onclick="goToPage(' + (page - 1) + ')">« 上一页</a></li>';
+        }
+
+        html += '<li class="current"><span>' + page + ' / ' + totalPages + '</span></li>';
+
+        if (page < totalPages) {
+            html += '<li><a href="javascript:;" onclick="goToPage(' + (page + 1) + ')">下一页 »</a></li>';
+        }
+
+        pager.innerHTML = html;
+    }
+
+    // 跳转页面
+    window.goToPage = function(page) {
+        currentPage = page;
+        loadLikesData();
+    };
+
+    // 删除点赞记录
+    window.deleteLikeRecord = function(id, btn) {
+        if (!confirm('确定删除这条点赞记录吗？')) {
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = '删除中...';
+
+        fetch(apiBase + 'action/icefox?do=deleteLikeRecord', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'id=' + id
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (data.success) {
+                // 重新加载当前页数据
+                loadLikesData();
+                // 更新列表中的点赞数
+                updateLikesCount(currentCid);
+                // 显示成功提示
+                showNotice(data.message, 'success');
+            } else {
+                showNotice(data.message || '删除失败', 'error');
+                btn.disabled = false;
+                btn.textContent = '删除';
+            }
+        })
+        .catch(function(err) {
+            showNotice('网络错误，请重试', 'error');
+            btn.disabled = false;
+            btn.textContent = '删除';
+        });
+    };
+
+    // 更新列表中的点赞数显示
+    function updateLikesCount(cid) {
+        var btns = document.querySelectorAll('.show-likes-btn[data-cid="' + cid + '"]');
+        btns.forEach(function(btn) {
+            var match = btn.textContent.match(/点赞\((\d+)\)/);
+            if (match) {
+                var count = parseInt(match[1]) - 1;
+                if (count < 0) count = 0;
+                btn.textContent = '点赞(' + count + ')';
+            }
+        });
+    }
+
+    // HTML 转义
+    function escapeHtml(text) {
+        if (text === null || text === undefined) {
+            return '';
+        }
+        var div = document.createElement('div');
+        div.textContent = String(text);
+        return div.innerHTML;
+    }
+
+    // 显示提示
+    function showNotice(message, type) {
+        var notice = document.createElement('div');
+        notice.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:10000;padding:12px 24px;border-radius:4px;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.15);';
+        if (type === 'success') {
+            notice.style.background = '#d4edda';
+            notice.style.color = '#155724';
+            notice.style.border = '1px solid #c3e6cb';
+        } else {
+            notice.style.background = '#f8d7da';
+            notice.style.color = '#721c24';
+            notice.style.border = '1px solid #f5c6cb';
+        }
+        notice.textContent = message;
+        document.body.appendChild(notice);
+        setTimeout(function() {
+            notice.style.transition = 'opacity 0.3s';
+            notice.style.opacity = '0';
+            setTimeout(function() { notice.remove(); }, 300);
+        }, 2000);
+    }
+
+    // ESC 关闭弹窗
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            closeLikesModal();
+        }
+    });
+})();
+</script>
+
+<?php
 include 'footer.php';
 ?>
