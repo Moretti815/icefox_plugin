@@ -809,19 +809,23 @@ class Action extends Widget implements ActionInterface {
                 }
             }
 
-            // 更新现有记录（覆盖昵称和分数）
-            $db->query(
-                $db->update($prefix . 'icefox_game_leaderboard')
-                    ->rows([
-                        'name' => $name,
-                        'score' => $score,
-                        'ip' => $ip,
-                        'updated_at' => $currentTime
-                    ])
-                    ->where('email = ?', $email)
-            );
-
-            $this->returnJson(['success' => true, 'message' => '成绩已更新', 'action' => 'updated']);
+            // 只有当新分数比旧分数高时才更新记录
+            if ($score > $existingRecord['score']) {
+                $db->query(
+                    $db->update($prefix . 'icefox_game_leaderboard')
+                        ->rows([
+                            'name' => $name,
+                            'score' => $score,
+                            'ip' => $ip,
+                            'updated_at' => $currentTime
+                        ])
+                        ->where('email = ?', $email)
+                );
+                $this->returnJson(['success' => true, 'message' => '🎉 新纪录！成绩已更新', 'action' => 'updated', 'newRecord' => true]);
+            } else {
+                // 新分数不比旧分数高，不更新
+                $this->returnJson(['success' => true, 'message' => '本次成绩未超过历史最高记录 ' . $existingRecord['score'] . 'm', 'action' => 'unchanged', 'bestScore' => $existingRecord['score']]);
+            }
         } else {
             // 插入新记录
             $db->query(
@@ -961,6 +965,17 @@ class Action extends Widget implements ActionInterface {
 
         // 4. 验证签名
         $expectedSignature = $this->generateGameSignature($score, $gameTime, $checkpoints);
+
+        // 调试输出
+        error_log("=== 签名验证调试 ===");
+        error_log("分数: $score");
+        error_log("游戏时长: $gameTime");
+        error_log("检查点: " . substr($checkpoints, 0, 100));
+        error_log("前端签名: $signature");
+        error_log("后端签名: $expectedSignature");
+        error_log("签名数据: " . $score . '|' . $gameTime . '|' . $checkpoints);
+        error_log("==================");
+
         if ($signature !== $expectedSignature) {
             return [
                 'valid' => false,
@@ -981,39 +996,14 @@ class Action extends Widget implements ActionInterface {
 
     /**
      * 自定义哈希函数（与前端JavaScript实现一致）
+     * 使用简单的字符串哈希，确保前后端一致
      */
     private function customHash($str) {
         $secretKey = 'icefox_game_secret_key_2024';
         $data = $str . $secretKey;
-        $hash = 0;
 
-        // 第一轮哈希
-        for ($i = 0; $i < strlen($data); $i++) {
-            $char = ord($data[$i]);
-            $hash = (($hash << 5) - $hash) + $char;
-            $hash = $hash & 0xFFFFFFFF; // 转换为32位整数
-        }
-
-        // 转换为正数并转16进制
-        $hash = abs($hash);
-        $hashStr = dechex($hash);
-
-        // 添加额外的混淆（与前端保持一致）
-        for ($i = 0; $i < strlen($data); $i += 7) {
-            $chunk = substr($data, $i, 7);
-            $chunkHash = 0;
-            for ($j = 0; $j < strlen($chunk); $j++) {
-                $chunkHash = (($chunkHash << 3) - $chunkHash) + ord($chunk[$j]);
-                $chunkHash = $chunkHash & 0xFFFFFFFF;
-            }
-            $hashStr .= dechex(abs($chunkHash));
-        }
-
-        // 确保长度一致
-        $hashStr = substr($hashStr, 0, 64);
-        $hashStr = str_pad($hashStr, 64, '0', STR_PAD_RIGHT);
-
-        return $hashStr;
+        // 使用MD5作为基础哈希（前后端一致）
+        return md5($data);
     }
 
     /**
