@@ -1,9 +1,18 @@
 <?php
+
+namespace TypechoPlugin\Icefox;
+
+use Typecho\Widget;
+use Typecho\Db;
+use Typecho\Request;
+use Typecho\Common;
 use Widget\Notice;
-class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
+use Widget\ActionInterface;
+
+class Action extends Widget implements ActionInterface {
     public function action(){
-        $request = Typecho_Request::getInstance();
-        $user = Typecho_Widget::widget('Widget_User');
+        $request = Request::getInstance();
+        $user = Widget::widget('Widget_User');
 
         // 操作类型
         $do = $request->get('do');
@@ -78,28 +87,33 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
             '操作成功',
             'success'
         );
-        $this->response->redirect(Typecho_Common::url('admin/manage-posts.php', null));
+        $this->response->redirect(Common::url('admin/manage-posts.php', null));
     }
 
     /**
      * 设置置顶状态
      */
     public function setTop($cid, $stat){
-        $db = Typecho_Db::get();
+        $db = Db::get();
         $prefix = $db->getPrefix();
 
-        $sql = " INSERT INTO `{$prefix}icefox_archive` (cid, is_top, likes)
- VALUES ({$cid}, $stat, 0)
- ON DUPLICATE KEY UPDATE is_top = VALUES(is_top);";
+        // 使用参数化防止 SQL 注入
+        $cid = intval($cid);
+        $stat = intval($stat);
 
-        return $db->fetchRow($db->query($sql));
+        $sql = "INSERT INTO `{$prefix}icefox_archive` (cid, is_top, likes)
+                VALUES ({$cid}, {$stat}, 0)
+                ON DUPLICATE KEY UPDATE is_top = {$stat}";
+
+        // INSERT/UPDATE 语句不返回结果集，直接执行即可
+        return $db->query($sql);
     }
 
     /**
      * 切换点赞状态（点赞/取消点赞）
      */
     private function toggleLike() {
-        $request = Typecho_Request::getInstance();
+        $request = Request::getInstance();
         $cid = $request->get('cid');
 
         if (empty($cid)) {
@@ -107,9 +121,9 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
             return;
         }
 
-        $db = Typecho_Db::get();
+        $db = Db::get();
         $prefix = $db->getPrefix();
-        $user = Typecho_Widget::widget('Widget_User');
+        $user = Widget::widget('Widget_User');
 
         // 获取用户信息
         $uid = $user->hasLogin() ? $user->uid : null;
@@ -235,7 +249,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
                 'likes' => $likes,
                 'likeUsers' => $likeUsers
             ]);
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             $this->returnJson(['success' => false, 'message' => '操作失败：' . $e->getMessage()]);
         }
     }
@@ -244,7 +258,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
      * 从评论记录中查找用户信息
      */
     private function getUserInfoFromComments($ip) {
-        $db = Typecho_Db::get();
+        $db = Db::get();
         $prefix = $db->getPrefix();
 
         // 验证并转义IP地址防止SQL注入
@@ -273,13 +287,13 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
      * 获取点赞用户列表
      */
     private function getLikeUsers($cid) {
-        $db = Typecho_Db::get();
+        $db = Db::get();
 
         $likes = $db->fetchAll(
             $db->select('author', 'mail', 'created_at')
                 ->from('table.icefox_likes')
                 ->where('cid = ?', $cid)
-                ->order('created_at', Typecho_Db::SORT_DESC)
+                ->order('created_at', Db::SORT_DESC)
         );
 
         $users = [];
@@ -299,7 +313,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
      * 获取点赞信息（点赞数和当前用户是否已点赞）
      */
     private function getLikes() {
-        $request = Typecho_Request::getInstance();
+        $request = Request::getInstance();
         $cid = $request->get('cid');
 
         if (empty($cid)) {
@@ -307,8 +321,8 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
             return;
         }
 
-        $db = Typecho_Db::get();
-        $user = Typecho_Widget::widget('Widget_User');
+        $db = Db::get();
+        $user = Widget::widget('Widget_User');
 
         // 获取点赞数
         $archive = $db->fetchRow($db->select('likes')->from('table.icefox_archive')->where('cid = ?', $cid));
@@ -360,7 +374,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
      * 添加评论
      */
     private function addComment() {
-        $request = Typecho_Request::getInstance();
+        $request = Request::getInstance();
 
         // 获取POST数据
         $input = file_get_contents('php://input');
@@ -390,7 +404,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
             return;
         }
 
-        $db = Typecho_Db::get();
+        $db = Db::get();
         $ip = $this->request->getIp();
         $agent = $this->request->getAgent();
         $currentTime = time();
@@ -429,7 +443,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
                     'parent' => $coid
                 ]
             ]);
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             $this->returnJson(['success' => false, 'message' => '评论发表失败：' . $e->getMessage()]);
         }
     }
@@ -438,9 +452,9 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
      * 创建文章
      */
     private function createPost() {
-        $request = Typecho_Request::getInstance();
-        $user = Typecho_Widget::widget('Widget_User');
-        $db = Typecho_Db::get();
+        $request = Request::getInstance();
+        $user = Widget::widget('Widget_User');
+        $db = Db::get();
         $prefix = $db->getPrefix();
 
         // 获取表单数据
@@ -499,7 +513,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
             $insertId = $db->query($db->insert('table.contents')->rows($postData));
 
             if (!$insertId) {
-                throw new Exception('文章创建失败');
+                throw new \Exception('文章创建失败');
             }
 
             // 保存扩展信息到icefox_archive表
@@ -527,7 +541,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
             }
 
             // 跳转到首页
-            $options = Typecho_Widget::widget('Widget_Options');
+            $options = Widget::widget('Widget_Options');
             $homeUrl = $options->siteUrl;
 
             $this->returnJson([
@@ -537,7 +551,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
                 'redirect' => $homeUrl
             ]);
 
-        } catch (Exception $e) {
+        } catch (\Exception $e) {
             $this->returnJson(['success' => false, 'message' => '发布失败：' . $e->getMessage()]);
         }
     }
@@ -654,7 +668,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
      * 保存文章自定义字段
      */
     private function savePostField($cid, $name, $type, $value) {
-        $db = Typecho_Db::get();
+        $db = Db::get();
 
         $data = [
             'cid' => $cid,
@@ -672,8 +686,8 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
      * 保存文章附件记录
      */
     private function savePostAttachments($cid, $files) {
-        $db = Typecho_Db::get();
-        $user = Typecho_Widget::widget('Widget_User');
+        $db = Db::get();
+        $user = Widget::widget('Widget_User');
 
         foreach ($files as $index => $file) {
             // 将附件保存到contents表（作为attachment类型）
@@ -708,8 +722,8 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
      * 保存游戏分数
      */
     private function saveGameScore() {
-        $request = Typecho_Request::getInstance();
-        $db = Typecho_Db::get();
+        $request = Request::getInstance();
+        $db = Db::get();
         $prefix = $db->getPrefix();
 
         // 获取参数
@@ -804,8 +818,8 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
      * 获取游戏排行榜
      */
     private function getGameLeaderboard() {
-        $request = Typecho_Request::getInstance();
-        $db = Typecho_Db::get();
+        $request = Request::getInstance();
+        $db = Db::get();
         $prefix = $db->getPrefix();
 
         // 获取参数
@@ -818,7 +832,7 @@ class Icefox_Action extends Typecho_Widget implements Widget_Interface_Do{
         $leaderboard = $db->fetchAll(
             $db->select('name', 'score', 'updated_at')
                 ->from($prefix . 'icefox_game_leaderboard')
-                ->order('score', Typecho_Db::SORT_DESC)
+                ->order('score', Db::SORT_DESC)
                 ->limit($limit)
         );
 

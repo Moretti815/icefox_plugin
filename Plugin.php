@@ -1,23 +1,26 @@
 <?php
+
+namespace TypechoPlugin\Icefox;
+
 use Typecho\Common;
-use Typecho\Plugin;
+use Typecho\Plugin as TypechoPlugin;
 use Typecho\Plugin\Exception;
-use Typecho\Plugin\Helper;
+use Typecho\Plugin\PluginInterface;
 use Typecho\Widget;
+use Typecho\Db;
+use Widget\Archive;
 
 if (!defined('__TYPECHO_ROOT_DIR__')) exit;
 
 /**
  * icefox插件是icefox主题的适配插件，需搭配icefox主题使用
- * @package icefox
+ * @package Icefox
  * @author 小胖脸
- * @version 1.0.0
+ * @version 1.0.6
  * @link https://xiaopanglian.com
  */
 
-// require_once 'utils/utils.php';
-
-class Icefox_Plugin implements Typecho_Plugin_Interface
+class Plugin implements PluginInterface
 {
     /**
      * 激活插件方法,如果激活失败,直接抛出异常
@@ -35,26 +38,22 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
             throw new Exception('请更新typecho到 1.2.0 以上');
         }
         // 添加后台头部钩子,加载视频按钮脚本
-        Plugin::factory('admin/write-post.php')->bottom = array('Icefox_Plugin', 'addVideoScript');
-        Plugin::factory('admin/write-page.php')->bottom = array('Icefox_Plugin', 'addVideoScript');
+        TypechoPlugin::factory('admin/write-post.php')->bottom = [__CLASS__, 'addVideoScript'];
+        TypechoPlugin::factory('admin/write-page.php')->bottom = [__CLASS__, 'addVideoScript'];
 
         self::checkAndCreateTable();
 
         // 注册接口路由
-        if (class_exists('Typecho\Plugin\Helper')) {
-            \Typecho\Plugin\Helper::addRoute('icefox_route','/action/icefox', 'Icefox_Action', 'action');
-        } elseif (class_exists('Helper')) {
-            \Helper::addRoute('icefox_route','/action/icefox', 'Icefox_Action', 'action');
-        }
+        \Helper::addRoute('icefox_route', '/action/icefox', Action::class, 'action');
 
         // 注册首页置顶功能钩子
-        Typecho_Plugin::factory('Widget_Archive')->indexHandle = array(__CLASS__, 'indexHandle');
+        TypechoPlugin::factory('Widget\Archive')->indexHandle = [__CLASS__, 'indexHandle'];
 
         if (file_exists("admin/manage-posts.php")) {
             rename("admin/manage-posts.php", "admin/manage-posts.php.bak");
             // if(version_compare(Common::VERSION,'1.2.0') >=0){
                 //挂载header.php
-                copy("usr/plugins/icefox/admin/manage-posts.php", "admin/manage-posts.php");
+                copy("usr/plugins/Icefox/admin/manage-posts.php", "admin/manage-posts.php");
             // }else{
             //     //挂载header.php
             //     copy("usr/plugins/SimpleAdmin/admin/header-old.php", "admin/header.php");
@@ -76,11 +75,7 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
     public static function deactivate()
     {
         // 移除路由
-        if (class_exists('Typecho\Plugin\Helper')) {
-            \Typecho\Plugin\Helper::removeRoute('icefox_route');
-        } elseif (class_exists('Helper')) {
-            \Helper::removeRoute('icefox_route');
-        }
+        \Helper::removeRoute('icefox_route');
 
         //还原menu.php
         // if (file_exists("var/Widget/Menu.php.bak")) {
@@ -98,10 +93,10 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
      * 获取插件配置面板
      *
      * @access public
-     * @param Typecho_Widget_Helper_Form $form 配置面板
+     * @param \Typecho\Widget\Helper\Form $form 配置面板
      * @return void
      */
-    public static function config(Typecho_Widget_Helper_Form $form)
+    public static function config(\Typecho\Widget\Helper\Form $form)
     {
 
     }
@@ -110,10 +105,10 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
      * 个人用户的配置面板
      *
      * @access public
-     * @param Typecho_Widget_Helper_Form $form
+     * @param \Typecho\Widget\Helper\Form $form
      * @return void
      */
-    public static function personalConfig(Typecho_Widget_Helper_Form $form)
+    public static function personalConfig(\Typecho\Widget\Helper\Form $form)
     {
     }
 
@@ -137,7 +132,7 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
     // 检查并创建表
     private static function checkAndCreateTable()
     {
-        $db = Typecho_Db::get();
+        $db = Db::get();
         $prefix = $db->getPrefix();
 
         // 创建文章扩展信息表
@@ -214,15 +209,15 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
      * 重置
      */
     public static function AdminPostResetAlloc($parameter){
-        $db = Typecho_Db::get();
+        $db = Db::get();
 
         // 执行原生SQL查询
         $query = $db->select()->from('table.contents')
             ->where('type = ?', 'post')
-            ->order('cid', Typecho_Db::SORT_DESC);
+            ->order('cid', Db::SORT_DESC);
 
         // 创建自定义Widget实例
-        $widget = new Widget_Contents_Post_Admin($parameter, $query);
+        $widget = new \Widget\Contents\Post\Admin($parameter, $query);
 
         // 保持分页功能
         if (isset($parameter->pageSize)) {
@@ -235,24 +230,24 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
     /**
      * 首页文章列表置顶功能
      *
-     * @param Widget_Archive $archive
-     * @param Typecho_Db_Query $select
+     * @param Archive $archive
+     * @param \Typecho\Db\Query $select
      */
     public static function indexHandle($archive, $select)
     {
-        $db = Typecho_Db::get();
+        $db = Db::get();
         $prefix = $db->getPrefix();
 
         // 关联 icefox_archive 表
         $select->join(
             $prefix . 'icefox_archive',
             $prefix . 'contents.cid = ' . $prefix . 'icefox_archive.cid',
-            Typecho_Db::LEFT_JOIN
+            Db::LEFT_JOIN
         );
 
         // 清除原有排序,重新按置顶和时间排序
-        $select->order('COALESCE(' . $prefix . 'icefox_archive.is_top, 0)', Typecho_Db::SORT_DESC)
-               ->order($prefix . 'contents.created', Typecho_Db::SORT_DESC);
+        $select->order('COALESCE(' . $prefix . 'icefox_archive.is_top, 0)', Db::SORT_DESC)
+               ->order($prefix . 'contents.created', Db::SORT_DESC);
     }
 
     /**
@@ -260,7 +255,7 @@ class Icefox_Plugin implements Typecho_Plugin_Interface
      */
     public static function addVideoScript()
     {
-        $pluginUrl = \Typecho\Common::url('usr/plugins/icefox/admin/video-button.js', \Typecho\Widget::widget('Widget_Options')->siteUrl);
+        $pluginUrl = Common::url('usr/plugins/Icefox/admin/video-button.js', Widget::widget('Widget_Options')->siteUrl);
         ?>
         <script src="<?php echo $pluginUrl; ?>?v=<?php echo time(); ?>"></script>
         <style>
