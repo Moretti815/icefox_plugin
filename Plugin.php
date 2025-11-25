@@ -7,6 +7,8 @@ use Typecho\Plugin as TypechoPlugin;
 use Typecho\Plugin\Exception;
 use Typecho\Plugin\PluginInterface;
 use Typecho\Widget;
+use Typecho\Widget\Helper\Form\Element\Hidden;
+use Typecho\Widget\Helper\Layout;
 use Typecho\Db;
 use Widget\Archive;
 
@@ -23,7 +25,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
 class Plugin implements PluginInterface
 {
     /**
-     * 激活插件方法,如果激活失败,直接抛出异常
+     * 激活插件方法,如果激活失败直接抛出异常
      *
      * @access public
      * @return void
@@ -35,13 +37,16 @@ class Plugin implements PluginInterface
             throw new Exception('请升级到 php 7 以上');
         }
         if(version_compare(Common::VERSION,'1.2.0') < 0){
-            throw new Exception('请更新typecho到 1.2.0 以上');
+            throw new Exception('请更新typecho到1.2.0 以上');
         }
         // 添加后台头部钩子,加载视频按钮脚本
         TypechoPlugin::factory('admin/write-post.php')->bottom = [__CLASS__, 'addVideoScript'];
         TypechoPlugin::factory('admin/write-page.php')->bottom = [__CLASS__, 'addVideoScript'];
 
         self::checkAndCreateTable();
+
+        // 初始化插件配置，防止进入设置页时缺少配置记录导致报错
+        \Utils\Helper::configPlugin('Icefox', ['icefox_init' => '1']);
 
         // 注册接口路由
         \Helper::addRoute('icefox_route', '/action/icefox', Action::class, 'action');
@@ -60,7 +65,7 @@ class Plugin implements PluginInterface
             // }
 
         }
-        // 替换默认的文章列表查询方法
+        // 替换默认的文章列表查询方式
         // Typecho_Plugin::factory('Widget_Contents_Post_Admin')->alloc = array(__CLASS__, 'AdminPostResetAlloc');
     }
 
@@ -98,7 +103,134 @@ class Plugin implements PluginInterface
      */
     public static function config(\Typecho\Widget\Helper\Form $form)
     {
+        // 提供一个隐藏配置项以便Typecho创建插件配置记录
+        $form->addInput(new Hidden('icefox_init', null, '1', 'icefox_init'));
 
+        // 处理删除友情链接
+        if (isset($_GET['delete_link'])) {
+            self::deleteLink($_GET['delete_link']);
+            Widget::widget('Widget_Notice')->set(_t('友情链接已删除'), 'success');
+        }
+
+        // 获取现有友情链接
+        $links = self::getLinks();
+
+        // 将自定义配置区域放入表单内部，便于提交
+        ob_start();
+
+        // 输出友情链接管理界面
+        echo '<div class="icefox-links-manager">';
+        echo '<h3>友情链接管理</h3>';
+        echo '<table class="typecho-list-table">';
+        echo '<thead>';
+        echo '<tr>';
+        echo '<th width="5%">排序</th>';
+        echo '<th width="15%">名称</th>';
+        echo '<th width="30%">链接地址</th>';
+        echo '<th width="30%">头像地址</th>';
+        echo '<th width="15%">描述</th>';
+        echo '<th width="5%">操作</th>';
+        echo '</tr>';
+        echo '</thead>';
+        echo '<tbody id="links-tbody">';
+
+        // 显示现有链接
+        foreach ($links as $link) {
+            echo '<tr data-id="' . $link['id'] . '">';
+            echo '<td><input type="number" name="links[' . $link['id'] . '][sort]" value="' . $link['sort'] . '" class="text" style="width:60px"></td>';
+            echo '<td><input type="text" name="links[' . $link['id'] . '][name]" value="' . htmlspecialchars($link['name']) . '" class="text" required></td>';
+            echo '<td><input type="url" name="links[' . $link['id'] . '][url]" value="' . htmlspecialchars($link['url']) . '" class="text" required></td>';
+            echo '<td><input type="url" name="links[' . $link['id'] . '][avatar]" value="' . htmlspecialchars($link['avatar']) . '" class="text"></td>';
+            echo '<td><input type="text" name="links[' . $link['id'] . '][description]" value="' . htmlspecialchars($link['description']) . '" class="text"></td>';
+            echo '<td><a href="?config=Icefox&delete_link=' . $link['id'] . '" class="operate-delete" onclick="return confirm(\'确定删除?\')">删除</a></td>';
+            echo '</tr>';
+        }
+
+        // 新增链接行
+        echo '<tr id="new-link-row">';
+        echo '<td><input type="number" name="new_link[sort]" value="0" class="text" style="width:60px"></td>';
+        echo '<td><input type="text" name="new_link[name]" placeholder="名称" class="text"></td>';
+        echo '<td><input type="url" name="new_link[url]" placeholder="https://example.com" class="text"></td>';
+        echo '<td><input type="url" name="new_link[avatar]" placeholder="https://example.com/avatar.jpg" class="text"></td>';
+        echo '<td><input type="text" name="new_link[description]" placeholder="描述" class="text"></td>';
+        echo '<td><button type="button" id="add-link-btn" class="btn btn-s">添加</button></td>';
+        echo '</tr>';
+
+        echo '</tbody>';
+        echo '</table>';
+        echo '</div>';
+
+        // JavaScript代码：验证新增链接的必填项
+        echo '<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            var addBtn = document.getElementById("add-link-btn");
+            if (addBtn) {
+                addBtn.addEventListener("click", function() {
+                    var row = document.getElementById("new-link-row");
+                    var nameInput = row.querySelector("[name=\"new_link[name]\"]");
+                    var urlInput = row.querySelector("[name=\"new_link[url]\"]");
+
+                    if(!nameInput.value.trim() || !urlInput.value.trim()) {
+                        alert("名称和链接地址为必填项");
+                        return;
+                    }
+
+                    alert("请点击下方的【保存设置】按钮来保存所有修改");
+                });
+            }
+        });
+        </script>';
+
+        echo '<style>
+        .icefox-links-manager {
+            margin: 20px 0;
+        }
+        .icefox-links-manager h3 {
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        .icefox-links-manager table {
+            width: 100%;
+        }
+        .icefox-links-manager table th,
+        .icefox-links-manager table td {
+            padding: 10px;
+            text-align: left;
+        }
+        .icefox-links-manager input.text {
+            width: 100%;
+        }
+        .operate-delete {
+            color: #c33;
+        }
+        .operate-delete:hover {
+            color: #a00;
+        }
+        </style>';
+
+        // 将输出的HTML注入表单
+        $html = ob_get_clean();
+        $layout = new Layout('div');
+        $layout->html($html);
+        $form->addItem($layout);
+    }
+
+    /**
+     * 处理配置保存（确保走到 /action/plugins-edit 提交时也能写入）
+     *
+     * @param array $settings
+     * @param bool $isInit
+     * @return void
+     */
+    public static function configHandle(array $settings, bool $isInit)
+    {
+        // 保存友情链接（检查是否有链接数据提交）
+        if (isset($_POST['links']) || isset($_POST['new_link'])) {
+            self::saveLinks();
+        }
+
+        // 保存插件基础配置到 options 表
+        \Widget\Plugins\Edit::configPlugin('Icefox', $settings);
     }
 
     /**
@@ -129,7 +261,7 @@ class Plugin implements PluginInterface
 
     }
 
-    // 检查并创建表
+    // 检查并创建所需数据表
     private static function checkAndCreateTable()
     {
         $db = Db::get();
@@ -203,6 +335,23 @@ class Plugin implements PluginInterface
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
         $db->query($sql);
+
+        // 创建友情链接表
+        $sql = "CREATE TABLE IF NOT EXISTS `{$prefix}icefox_links` (
+            `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+            `name` varchar(100) NOT NULL, -- 链接名称
+            `url` varchar(500) NOT NULL, -- 链接地址
+            `avatar` varchar(500) DEFAULT NULL, -- 头像地址
+            `description` varchar(200) DEFAULT NULL, -- 链接描述
+            `sort` int(10) unsigned NOT NULL DEFAULT '0', -- 排序
+            `status` tinyint(1) NOT NULL DEFAULT '1', -- 状态：1显示 0隐藏
+            `created_at` int(10) unsigned NOT NULL, -- 创建时间
+            `updated_at` int(10) unsigned NOT NULL, -- 更新时间
+            PRIMARY KEY (`id`),
+            KEY `idx_sort_status` (`sort`, `status`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
+        $db->query($sql);
     }
 
     /**
@@ -272,5 +421,88 @@ class Plugin implements PluginInterface
         </style>
         <?php
     }
+
+    /**
+     * 获取所有友情链接
+     */
+    public static function getLinks()
+    {
+        $db = Db::get();
+        $prefix = $db->getPrefix();
+
+        $links = $db->fetchAll(
+            $db->select()
+                ->from($prefix . 'icefox_links')
+                ->where('status = ?', 1)
+                ->order('sort', Db::SORT_ASC)
+        );
+
+        return $links ? $links : [];
+    }
+
+    /**
+     * 保存友情链接
+     */
+    public static function saveLinks()
+    {
+        $db = Db::get();
+        $prefix = $db->getPrefix();
+        $currentTime = time();
+
+        // 更新现有链接
+        if (isset($_POST['links']) && is_array($_POST['links'])) {
+            foreach ($_POST['links'] as $id => $link) {
+                if (empty($link['name']) || empty($link['url'])) {
+                    continue;
+                }
+
+                $db->query(
+                    $db->update($prefix . 'icefox_links')
+                        ->rows([
+                            'name' => $link['name'],
+                            'url' => $link['url'],
+                            'avatar' => $link['avatar'] ?? '',
+                            'description' => $link['description'] ?? '',
+                            'sort' => intval($link['sort']),
+                            'updated_at' => $currentTime
+                        ])
+                        ->where('id = ?', $id)
+                );
+            }
+        }
+
+        // 添加新链接
+        if (isset($_POST['new_link']) && !empty($_POST['new_link']['name']) && !empty($_POST['new_link']['url'])) {
+            $newLink = $_POST['new_link'];
+            $db->query(
+                $db->insert($prefix . 'icefox_links')
+                    ->rows([
+                        'name' => $newLink['name'],
+                        'url' => $newLink['url'],
+                        'avatar' => $newLink['avatar'] ?? '',
+                        'description' => $newLink['description'] ?? '',
+                        'sort' => intval($newLink['sort']),
+                        'status' => 1,
+                        'created_at' => $currentTime,
+                        'updated_at' => $currentTime
+                    ])
+            );
+        }
+    }
+
+    /**
+     * 删除友情链接
+     */
+    public static function deleteLink($id)
+    {
+        $db = Db::get();
+        $prefix = $db->getPrefix();
+
+        $db->query(
+            $db->delete($prefix . 'icefox_links')
+                ->where('id = ?', intval($id))
+        );
+    }
 }
+
 

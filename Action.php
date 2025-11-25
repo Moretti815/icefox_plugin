@@ -1,6 +1,6 @@
 <?php
 
-namespace TypechoPlugin\Icefox;
+namespace TypechoPlugin\icefox;
 
 use Typecho\Widget;
 use Typecho\Db;
@@ -21,8 +21,8 @@ class Action extends Widget implements ActionInterface {
             return;
         }
 
-        // 点赞、评论和游戏相关操作不需要管理员权限
-        if ($do === 'like' || $do === 'getLikes' || $do === 'addComment' || $do === 'saveGameScore' || $do === 'getGameLeaderboard') {
+        // 点赞、评论、游戏和友情链接获取操作不需要管理员权限
+        if ($do === 'like' || $do === 'getLikes' || $do === 'addComment' || $do === 'saveGameScore' || $do === 'getGameLeaderboard' || $do === 'getFriendLinks') {
             if ($do === 'like') {
                 $this->toggleLike();
             } else if ($do === 'getLikes') {
@@ -33,6 +33,8 @@ class Action extends Widget implements ActionInterface {
                 $this->saveGameScore();
             } else if ($do === 'getGameLeaderboard') {
                 $this->getGameLeaderboard();
+            } else if ($do === 'getFriendLinks') {
+                $this->getFriendLinks();
             }
             return;
         }
@@ -409,7 +411,24 @@ class Action extends Widget implements ActionInterface {
         $agent = $this->request->getAgent();
         $currentTime = time();
 
+        // 获取系统设置
+        $options = Widget::widget('Widget_Options');
+        $user = Widget::widget('Widget_User');
+
         try {
+            // 确定评论状态：根据系统设置和用户身份
+            $status = 'approved'; // 默认通过
+
+            // 检查是否需要审核
+            if ($options->commentsRequireModeration) {
+                // 如果用户已登录且有管理权限，直接通过
+                if ($user->hasLogin() && $user->pass('administrator', true)) {
+                    $status = 'approved';
+                } else {
+                    $status = 'waiting';
+                }
+            }
+
             // 插入评论数据
             $comment = [
                 'cid' => $cid,
@@ -423,16 +442,22 @@ class Action extends Widget implements ActionInterface {
                 'agent' => $agent,
                 'text' => $text,
                 'type' => 'comment',
-                'status' => 'approved', // 可以改为 'waiting' 需要审核
+                'status' => $status,
                 'parent' => $coid
             ];
 
             $insertId = $db->query($db->insert('table.comments')->rows($comment));
 
+            // 根据审核状态返回不同消息
+            $message = ($status === 'waiting')
+                ? '评论已提交，等待审核'
+                : '评论发表成功';
+
             // 返回评论信息用于前端展示
             $this->returnJson([
                 'success' => true,
-                'message' => '评论发表成功',
+                'message' => $message,
+                'status' => $status,
                 'comment' => [
                     'coid' => $insertId,
                     'author' => $author,
@@ -440,7 +465,8 @@ class Action extends Widget implements ActionInterface {
                     'url' => $url,
                     'text' => $text,
                     'created' => $currentTime,
-                    'parent' => $coid
+                    'parent' => $coid,
+                    'status' => $status
                 ]
             ]);
         } catch (\Exception $e) {
@@ -988,6 +1014,33 @@ class Action extends Widget implements ActionInterface {
         $hashStr = str_pad($hashStr, 64, '0', STR_PAD_RIGHT);
 
         return $hashStr;
+    }
+
+    /**
+     * 获取友情链接列表
+     */
+    private function getFriendLinks() {
+        $db = Db::get();
+        $prefix = $db->getPrefix();
+
+        try {
+            $links = $db->fetchAll(
+                $db->select()
+                    ->from($prefix . 'icefox_links')
+                    ->where('status = ?', 1)
+                    ->order('sort', Db::SORT_ASC)
+            );
+
+            $this->returnJson([
+                'success' => true,
+                'data' => $links ? $links : []
+            ]);
+        } catch (\Exception $e) {
+            $this->returnJson([
+                'success' => false,
+                'message' => '获取友情链接失败：' . $e->getMessage()
+            ]);
+        }
     }
 
     /**
