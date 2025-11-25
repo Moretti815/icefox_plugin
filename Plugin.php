@@ -18,7 +18,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * icefox插件是icefox主题的适配插件，需搭配icefox主题使用
  * @package Icefox
  * @author 小胖脸
- * @version 1.0.8
+ * @version 1.1.5
  * @link https://xiaopanglian.com
  */
 
@@ -106,12 +106,6 @@ class Plugin implements PluginInterface
         // 提供一个隐藏配置项以便Typecho创建插件配置记录
         $form->addInput(new Hidden('icefox_init', null, '1', 'icefox_init'));
 
-        // 处理删除友情链接
-        if (isset($_GET['delete_link'])) {
-            self::deleteLink($_GET['delete_link']);
-            Widget::widget('Widget_Notice')->set(_t('友情链接已删除'), 'success');
-        }
-
         // 获取现有友情链接
         $links = self::getLinks();
 
@@ -142,7 +136,7 @@ class Plugin implements PluginInterface
             echo '<td><input type="url" name="links[' . $link['id'] . '][url]" value="' . htmlspecialchars($link['url']) . '" class="text" required></td>';
             echo '<td><input type="url" name="links[' . $link['id'] . '][avatar]" value="' . htmlspecialchars($link['avatar']) . '" class="text"></td>';
             echo '<td><input type="text" name="links[' . $link['id'] . '][description]" value="' . htmlspecialchars($link['description']) . '" class="text"></td>';
-            echo '<td><a href="?config=Icefox&delete_link=' . $link['id'] . '" class="operate-delete" onclick="return confirm(\'确定删除?\')">删除</a></td>';
+            echo '<td><button type="button" class="btn btn-s delete-link-btn" data-id="' . $link['id'] . '" style="color:#c33;">删除</button></td>';
             echo '</tr>';
         }
 
@@ -160,22 +154,121 @@ class Plugin implements PluginInterface
         echo '</table>';
         echo '</div>';
 
-        // JavaScript代码：验证新增链接的必填项
+        // JavaScript代码：动态添加多行友情链接和AJAX删除
         echo '<script>
         document.addEventListener("DOMContentLoaded", function() {
             var addBtn = document.getElementById("add-link-btn");
-            if (addBtn) {
-                addBtn.addEventListener("click", function() {
-                    var row = document.getElementById("new-link-row");
-                    var nameInput = row.querySelector("[name=\"new_link[name]\"]");
-                    var urlInput = row.querySelector("[name=\"new_link[url]\"]");
+            var tbody = document.getElementById("links-tbody");
+            var newRowIndex = 0;
 
+            // 显示提示消息
+            function showNotice(message, type) {
+                var notice = document.createElement("div");
+                notice.className = "message " + (type === "success" ? "notice" : "error");
+                notice.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;padding:12px 24px;border-radius:4px;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.15);";
+                if (type === "success") {
+                    notice.style.background = "#d4edda";
+                    notice.style.color = "#155724";
+                    notice.style.border = "1px solid #c3e6cb";
+                } else {
+                    notice.style.background = "#f8d7da";
+                    notice.style.color = "#721c24";
+                    notice.style.border = "1px solid #f5c6cb";
+                }
+                notice.textContent = message;
+                document.body.appendChild(notice);
+                setTimeout(function() {
+                    notice.style.transition = "opacity 0.3s";
+                    notice.style.opacity = "0";
+                    setTimeout(function() { notice.remove(); }, 300);
+                }, 2000);
+            }
+
+            // 绑定删除按钮事件
+            function bindDeleteButtons() {
+                document.querySelectorAll(".delete-link-btn").forEach(function(btn) {
+                    btn.onclick = function() {
+                        var linkId = this.getAttribute("data-id");
+                        var row = this.closest("tr");
+                        var linkName = row.querySelector("input[name*=\"[name]\"]").value;
+
+                        if (!confirm("确定删除友情链接「" + linkName + "」吗？")) {
+                            return;
+                        }
+
+                        btn.disabled = true;
+                        btn.textContent = "删除中...";
+
+                        fetch("/action/icefox?do=deleteFriendLink", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                            body: "id=" + encodeURIComponent(linkId)
+                        })
+                        .then(function(response) { return response.json(); })
+                        .then(function(data) {
+                            if (data.success) {
+                                row.style.transition = "opacity 0.3s";
+                                row.style.opacity = "0";
+                                setTimeout(function() { row.remove(); }, 300);
+                                showNotice(data.message || "删除成功", "success");
+                            } else {
+                                showNotice(data.message || "删除失败", "error");
+                                btn.disabled = false;
+                                btn.textContent = "删除";
+                            }
+                        })
+                        .catch(function(error) {
+                            showNotice("网络错误，请重试", "error");
+                            btn.disabled = false;
+                            btn.textContent = "删除";
+                        });
+                    };
+                });
+            }
+
+            // 初始化删除按钮
+            bindDeleteButtons();
+
+            if (addBtn && tbody) {
+                addBtn.addEventListener("click", function() {
+                    var newRow = document.getElementById("new-link-row");
+                    var nameInput = newRow.querySelector("[name=\"new_link[name]\"]");
+                    var urlInput = newRow.querySelector("[name=\"new_link[url]\"]");
+                    var sortInput = newRow.querySelector("[name=\"new_link[sort]\"]");
+                    var avatarInput = newRow.querySelector("[name=\"new_link[avatar]\"]");
+                    var descInput = newRow.querySelector("[name=\"new_link[description]\"]");
+
+                    // 验证必填项
                     if(!nameInput.value.trim() || !urlInput.value.trim()) {
                         alert("名称和链接地址为必填项");
                         return;
                     }
 
-                    alert("请点击下方的【保存设置】按钮来保存所有修改");
+                    // 创建新行（待保存的链接）
+                    newRowIndex++;
+                    var tr = document.createElement("tr");
+                    tr.className = "pending-link-row";
+                    tr.innerHTML = \'<td><input type="number" name="new_links[\' + newRowIndex + \'][sort]" value="\' + (sortInput.value || 0) + \'" class="text" style="width:60px"></td>\' +
+                        \'<td><input type="text" name="new_links[\' + newRowIndex + \'][name]" value="\' + nameInput.value.replace(/"/g, "&quot;") + \'" class="text" required></td>\' +
+                        \'<td><input type="url" name="new_links[\' + newRowIndex + \'][url]" value="\' + urlInput.value.replace(/"/g, "&quot;") + \'" class="text" required></td>\' +
+                        \'<td><input type="url" name="new_links[\' + newRowIndex + \'][avatar]" value="\' + (avatarInput.value || "").replace(/"/g, "&quot;") + \'" class="text"></td>\' +
+                        \'<td><input type="text" name="new_links[\' + newRowIndex + \'][description]" value="\' + (descInput.value || "").replace(/"/g, "&quot;") + \'" class="text"></td>\' +
+                        \'<td><button type="button" class="btn btn-s remove-pending-btn" style="color:#c33;">移除</button></td>\';
+
+                    // 插入到新增行之前
+                    tbody.insertBefore(tr, newRow);
+
+                    // 清空输入框准备添加下一行
+                    nameInput.value = "";
+                    urlInput.value = "";
+                    sortInput.value = "0";
+                    avatarInput.value = "";
+                    descInput.value = "";
+
+                    // 绑定移除按钮事件
+                    tr.querySelector(".remove-pending-btn").addEventListener("click", function() {
+                        tr.remove();
+                    });
                 });
             }
         });
@@ -206,6 +299,15 @@ class Plugin implements PluginInterface
         .operate-delete:hover {
             color: #a00;
         }
+        .pending-link-row {
+            background-color: #fffbea;
+        }
+        .pending-link-row td {
+            border-bottom: 1px dashed #e0c36a;
+        }
+        #new-link-row {
+            background-color: #f0f9ff;
+        }
         </style>';
 
         // 将输出的HTML注入表单
@@ -225,8 +327,10 @@ class Plugin implements PluginInterface
     public static function configHandle(array $settings, bool $isInit)
     {
         // 保存友情链接（检查是否有链接数据提交）
-        if (isset($_POST['links']) || isset($_POST['new_link'])) {
+        if (isset($_POST['links']) || isset($_POST['new_link']) || isset($_POST['new_links'])) {
             self::saveLinks();
+            // 设置保存成功提示
+            Widget::widget('Widget_Notice')->set(_t('友情链接保存成功'), 'success');
         }
 
         // 保存插件基础配置到 options 表
@@ -471,7 +575,7 @@ class Plugin implements PluginInterface
             }
         }
 
-        // 添加新链接
+        // 添加单个新链接（从最后一行输入框）
         if (isset($_POST['new_link']) && !empty($_POST['new_link']['name']) && !empty($_POST['new_link']['url'])) {
             $newLink = $_POST['new_link'];
             $db->query(
@@ -487,6 +591,29 @@ class Plugin implements PluginInterface
                         'updated_at' => $currentTime
                     ])
             );
+        }
+
+        // 添加多个新链接（通过"添加"按钮动态添加的行）
+        if (isset($_POST['new_links']) && is_array($_POST['new_links'])) {
+            foreach ($_POST['new_links'] as $newLink) {
+                if (empty($newLink['name']) || empty($newLink['url'])) {
+                    continue;
+                }
+
+                $db->query(
+                    $db->insert($prefix . 'icefox_links')
+                        ->rows([
+                            'name' => $newLink['name'],
+                            'url' => $newLink['url'],
+                            'avatar' => $newLink['avatar'] ?? '',
+                            'description' => $newLink['description'] ?? '',
+                            'sort' => intval($newLink['sort']),
+                            'status' => 1,
+                            'created_at' => $currentTime,
+                            'updated_at' => $currentTime
+                        ])
+                );
+            }
         }
     }
 

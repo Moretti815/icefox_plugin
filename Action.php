@@ -39,6 +39,16 @@ class Action extends Widget implements ActionInterface {
             return;
         }
 
+        // 删除友情链接需要管理员权限
+        if ($do === 'deleteFriendLink') {
+            if (!$user->pass('administrator')) {
+                $this->returnJson(['success' => false, 'message' => '无权操作']);
+                return;
+            }
+            $this->deleteFriendLink();
+            return;
+        }
+
         // 发布文章需要登录但不需要管理员权限
         if ($do === 'createPost') {
             if (!$user->hasLogin()) {
@@ -1029,6 +1039,52 @@ class Action extends Widget implements ActionInterface {
             $this->returnJson([
                 'success' => false,
                 'message' => '获取友情链接失败：' . $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 删除友情链接
+     */
+    private function deleteFriendLink() {
+        $request = Request::getInstance();
+        $db = Db::get();
+        $prefix = $db->getPrefix();
+
+        $id = intval($request->get('id'));
+
+        if (empty($id)) {
+            $this->returnJson(['success' => false, 'message' => '链接ID缺失']);
+            return;
+        }
+
+        try {
+            // 检查链接是否存在
+            $link = $db->fetchRow(
+                $db->select()
+                    ->from($prefix . 'icefox_links')
+                    ->where('id = ?', $id)
+            );
+
+            if (!$link) {
+                $this->returnJson(['success' => false, 'message' => '链接不存在']);
+                return;
+            }
+
+            // 执行删除
+            $db->query(
+                $db->delete($prefix . 'icefox_links')
+                    ->where('id = ?', $id)
+            );
+
+            $this->returnJson([
+                'success' => true,
+                'message' => '友情链接「' . $link['name'] . '」已删除'
+            ]);
+        } catch (\Exception $e) {
+            $this->returnJson([
+                'success' => false,
+                'message' => '删除失败：' . $e->getMessage()
             ]);
         }
     }
