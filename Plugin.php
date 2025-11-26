@@ -18,7 +18,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * icefox插件是icefox主题的适配插件，需搭配icefox主题使用
  * @package Icefox
  * @author 小胖脸
- * @version 1.1.5
+ * @version 1.1.6
  * @link https://xiaopanglian.com
  */
 
@@ -131,7 +131,7 @@ class Plugin implements PluginInterface
         // 显示现有链接
         foreach ($links as $link) {
             echo '<tr data-id="' . $link['id'] . '">';
-            echo '<td><input type="number" name="links[' . $link['id'] . '][sort]" value="' . $link['sort'] . '" class="text" style="width:60px"></td>';
+            echo '<td><input type="number" name="links[' . $link['id'] . '][sort]" value="' . $link['sort'] . '" class="text" ></td>';
             echo '<td><input type="text" name="links[' . $link['id'] . '][name]" value="' . htmlspecialchars($link['name']) . '" class="text" required></td>';
             echo '<td><input type="url" name="links[' . $link['id'] . '][url]" value="' . htmlspecialchars($link['url']) . '" class="text" required></td>';
             echo '<td><input type="url" name="links[' . $link['id'] . '][avatar]" value="' . htmlspecialchars($link['avatar']) . '" class="text"></td>';
@@ -142,7 +142,7 @@ class Plugin implements PluginInterface
 
         // 新增链接行
         echo '<tr id="new-link-row">';
-        echo '<td><input type="number" name="new_link[sort]" value="0" class="text" style="width:60px"></td>';
+        echo '<td><input type="number" name="new_link[sort]" value="0" class="text" ></td>';
         echo '<td><input type="text" name="new_link[name]" placeholder="名称" class="text"></td>';
         echo '<td><input type="url" name="new_link[url]" placeholder="https://example.com" class="text"></td>';
         echo '<td><input type="url" name="new_link[avatar]" placeholder="https://example.com/avatar.jpg" class="text"></td>';
@@ -248,7 +248,7 @@ class Plugin implements PluginInterface
                     newRowIndex++;
                     var tr = document.createElement("tr");
                     tr.className = "pending-link-row";
-                    tr.innerHTML = \'<td><input type="number" name="new_links[\' + newRowIndex + \'][sort]" value="\' + (sortInput.value || 0) + \'" class="text" style="width:60px"></td>\' +
+                    tr.innerHTML = \'<td><input type="number" name="new_links[\' + newRowIndex + \'][sort]" value="\' + (sortInput.value || 0) + \'" class="text"></td>\' +
                         \'<td><input type="text" name="new_links[\' + newRowIndex + \'][name]" value="\' + nameInput.value.replace(/"/g, "&quot;") + \'" class="text" required></td>\' +
                         \'<td><input type="url" name="new_links[\' + newRowIndex + \'][url]" value="\' + urlInput.value.replace(/"/g, "&quot;") + \'" class="text" required></td>\' +
                         \'<td><input type="url" name="new_links[\' + newRowIndex + \'][avatar]" value="\' + (avatarInput.value || "").replace(/"/g, "&quot;") + \'" class="text"></td>\' +
@@ -308,6 +308,11 @@ class Plugin implements PluginInterface
         #new-link-row {
             background-color: #f0f9ff;
         }
+            input[type=text], input[type=password], input[type=email], textarea{
+                border: 1px solid black;
+                padding-block: 1px;
+                padding-inline: 2px;
+            }
         </style>';
 
         // 将输出的HTML注入表单
