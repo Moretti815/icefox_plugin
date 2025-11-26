@@ -18,7 +18,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * icefox插件是icefox主题的适配插件，需搭配icefox主题使用
  * @package Icefox
  * @author 小胖脸
- * @version 1.1.6
+ * @version 1.1.8
  * @link https://xiaopanglian.com
  */
 
@@ -339,7 +339,7 @@ class Plugin implements PluginInterface
         }
 
         // 保存插件基础配置到 options 表
-        \Widget\Plugins\Edit::configPlugin('Icefox', $settings);
+        \Utils\Helper::configPlugin('Icefox', $settings);
     }
 
     /**
@@ -399,7 +399,7 @@ class Plugin implements PluginInterface
             `created_at` int(10) unsigned NOT NULL, -- 点赞时间
             PRIMARY KEY (`id`),
             KEY `idx_cid` (`cid`),
-            KEY `idx_mail_ip` (`mail`, `ip`),
+            KEY `idx_mail_ip` (`mail`(100), `ip`),
             KEY `idx_anonymous` (`anonymous_id`),
             FOREIGN KEY (`cid`) REFERENCES `{$prefix}contents`(`cid`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
@@ -438,7 +438,7 @@ class Plugin implements PluginInterface
             `created_at` int(10) unsigned NOT NULL, -- 首次创建时间
             `updated_at` int(10) unsigned NOT NULL, -- 最后更新时间
             PRIMARY KEY (`id`),
-            UNIQUE KEY `unique_email` (`email`),
+            UNIQUE KEY `unique_email` (`email`(191)),
             KEY `idx_score` (`score` DESC),
             KEY `idx_ip_updated` (`ip`, `updated_at`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";

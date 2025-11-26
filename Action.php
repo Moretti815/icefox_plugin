@@ -464,7 +464,7 @@ class Action extends Widget implements ActionInterface {
                 'cid' => $cid,
                 'created' => $currentTime,
                 'author' => $author,
-                'authorId' => 0,
+                'authorId' => $user->hasLogin() ? $user->uid : 0,
                 'ownerId' => 0,
                 'mail' => $mail,
                 'url' => $url,
@@ -496,7 +496,8 @@ class Action extends Widget implements ActionInterface {
                     'text' => $text,
                     'created' => $currentTime,
                     'parent' => $coid,
-                    'status' => $status
+                    'status' => $status,
+                    'userGroup' => $user->hasLogin() ? $user->group : null
                 ]
             ]);
         } catch (\Exception $e) {
