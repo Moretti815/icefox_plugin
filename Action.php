@@ -483,17 +483,17 @@ class Action extends Widget implements ActionInterface {
                 ? '评论已提交，等待审核'
                 : '评论发表成功';
 
-            // 返回评论信息用于前端展示
+            // 返回评论信息用于前端展示（XSS防护：对用户输入进行HTML转义）
             $this->returnJson([
                 'success' => true,
                 'message' => $message,
                 'status' => $status,
                 'comment' => [
                     'coid' => $insertId,
-                    'author' => $author,
-                    'mail' => $mail,
-                    'url' => $url,
-                    'text' => $text,
+                    'author' => htmlspecialchars($author, ENT_QUOTES, 'UTF-8'),
+                    'mail' => htmlspecialchars($mail, ENT_QUOTES, 'UTF-8'),
+                    'url' => htmlspecialchars($url, ENT_QUOTES, 'UTF-8'),
+                    'text' => htmlspecialchars($text, ENT_QUOTES, 'UTF-8'),
                     'created' => $currentTime,
                     'parent' => $coid,
                     'status' => $status,
@@ -1100,7 +1100,7 @@ class Action extends Widget implements ActionInterface {
 
             $this->returnJson([
                 'success' => true,
-                'message' => '友情链接「' . $link['name'] . '」已删除'
+                'message' => '友情链接「' . htmlspecialchars($link['name'], ENT_QUOTES, 'UTF-8') . '」已删除'
             ]);
         } catch (\Exception $e) {
             $this->returnJson([
@@ -1224,7 +1224,7 @@ class Action extends Widget implements ActionInterface {
 
             $this->returnJson([
                 'success' => true,
-                'message' => '已删除「' . $author . '」的点赞记录'
+                'message' => '已删除「' . htmlspecialchars($author, ENT_QUOTES, 'UTF-8') . '」的点赞记录'
             ]);
         } catch (\Exception $e) {
             $this->returnJson([

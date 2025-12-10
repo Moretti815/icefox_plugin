@@ -110,8 +110,9 @@
         var textBefore = textarea.val().substring(0, cursorPos);
         var textAfter = textarea.val().substring(cursorPos);
 
-        // 构建视频标签
-        var videoTag = '\n<video src="' + videoUrl + '" controls></video>\n';
+        // 构建视频标签，对URL进行HTML转义以防止XSS
+        var escapedUrl = videoUrl.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+        var videoTag = '\n<video src="' + escapedUrl + '" controls></video>\n';
 
         // 插入视频标签
         textarea.val(textBefore + videoTag + textAfter);
