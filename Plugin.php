@@ -50,6 +50,7 @@ class Plugin implements PluginInterface
 
         // 注册接口路由
         \Helper::addRoute('icefox_route', '/action/icefox', Action::class, 'action');
+        \Helper::addRoute('icefox_memo_api', '/v1/memo', MemoApi::class, 'action');
 
         // 注册首页置顶功能钩子
         TypechoPlugin::factory('Widget\Archive')->indexHandle = [__CLASS__, 'indexHandle'];
@@ -81,6 +82,7 @@ class Plugin implements PluginInterface
     {
         // 移除路由
         \Helper::removeRoute('icefox_route');
+        \Helper::removeRoute('icefox_memo_api');
 
         //还原menu.php
         // if (file_exists("var/Widget/Menu.php.bak")) {

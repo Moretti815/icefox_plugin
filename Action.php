@@ -574,9 +574,10 @@ class Action extends Widget implements ActionInterface {
             }
 
             // 保存扩展信息到icefox_archive表
+            $isTop = $request->get('isTop', '0') === '1' ? 1 : 0;
             $archiveData = [
                 'cid' => $insertId,
-                'is_top' => 0,
+                'is_top' => $isTop,
                 'likes' => 0
             ];
             $db->query($db->insert('table.icefox_archive')->rows($archiveData));
@@ -595,6 +596,63 @@ class Action extends Widget implements ActionInterface {
             // 保存上传的文件记录
             if (!empty($uploadedFiles)) {
                 $this->savePostAttachments($insertId, $uploadedFiles);
+            }
+
+            // 保存标签
+            $tagsJson = $request->get('tags', '[]');
+            $tags = @json_decode($tagsJson, true);
+            if (is_array($tags) && !empty($tags)) {
+                $seenMids = [];
+                foreach (array_slice($tags, 0, 10) as $tagName) {
+                    $tagName = trim((string)$tagName);
+                    if ($tagName === '') continue;
+
+                    // 检查标签是否已存在
+                    $existing = $db->fetchRow(
+                        $db->select('mid')
+                            ->from('table.metas')
+                            ->where('name = ?', $tagName)
+                            ->where('type = ?', 'tag')
+                    );
+
+                    if ($existing) {
+                        $mid = (int)$existing['mid'];
+                    } else {
+                        // 创建新标签
+                        $slug = preg_replace('/[^\x{4e00-\x{9fa5}\w\-_]+/u', '-', $tagName);
+                        $slug = trim($slug, '-_');
+                        $slug = $slug === '' ? 'tag-' . uniqid() : mb_substr($slug, 0, 128, 'UTF-8');
+                        $mid = $db->query(
+                            $db->insert('table.metas')->rows([
+                                'name' => $tagName,
+                                'slug' => $slug,
+                                'type' => 'tag',
+                                'description' => null,
+                                'count' => 0,
+                                'order' => 0,
+                                'parent' => 0
+                            ])
+                        );
+                    }
+
+                    if (!$mid || isset($seenMids[$mid])) continue;
+                    $seenMids[$mid] = true;
+
+                    // 建立关联关系
+                    try {
+                        $db->query($db->insert('table.relationships')->rows([
+                            'cid' => $insertId,
+                            'mid' => $mid
+                        ]));
+                    } catch (\Exception $e) {
+                        // 忽略重复关联
+                    }
+
+                    // 更新标签计数
+                    $db->query(
+                        "UPDATE {$prefix}metas SET count = count + 1 WHERE mid = " . intval($mid)
+                    );
+                }
             }
 
             // 跳转到首页
