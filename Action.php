@@ -11,6 +11,16 @@ use Widget\ActionInterface;
 
 class Action extends Widget implements ActionInterface {
     public function action(){
+        try {
+            $this->handleAction();
+        } catch (\Throwable $e) {
+            // 记录详细错误到日志
+            error_log('[Icefox Action Error] ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine() . "\n" . $e->getTraceAsString());
+            $this->returnJson(['success' => false, 'message' => '服务器错误: ' . $e->getMessage()]);
+        }
+    }
+
+    private function handleAction(){
         $request = Request::getInstance();
         $user = Widget::widget('Widget_User');
 
