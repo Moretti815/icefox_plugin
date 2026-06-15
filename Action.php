@@ -14,8 +14,11 @@ class Action extends Widget implements ActionInterface {
         try {
             $this->handleAction();
         } catch (\Throwable $e) {
-            // 记录详细错误到日志
-            error_log('[Icefox Action Error] ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine() . "\n" . $e->getTraceAsString());
+            if (ob_get_level()) {
+                ob_clean();
+            }
+            $message = '[Icefox Action Error] ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine() . "\n" . $e->getTraceAsString();
+            error_log($message);
             $this->returnJson(['success' => false, 'message' => '服务器错误: ' . $e->getMessage()]);
         }
     }
@@ -530,6 +533,12 @@ class Action extends Widget implements ActionInterface {
         $positionUrl = $request->get('positionUrl', '');
         $visibility = $request->get('visibility', 'public');
         $isAdvertise = $request->get('isAdvertise', '0') === '1' ? 1 : 0;
+        try {
+            $linkCard = $this->normalizeLinkCard($request->get('linkCard', ''));
+        } catch (\Exception $e) {
+            $this->returnJson(['success' => false, 'message' => $e->getMessage()]);
+            return;
+        }
 
         // 验证内容
         $hasMedia = false;
@@ -540,7 +549,7 @@ class Action extends Widget implements ActionInterface {
             }
         }
 
-        if (empty(trim($content)) && !$hasMedia) {
+        if (empty(trim($content)) && !$hasMedia && empty($linkCard)) {
             $this->returnJson(['success' => false, 'message' => '请输入内容或选择图片/视频']);
             return;
         }
@@ -558,9 +567,13 @@ class Action extends Widget implements ActionInterface {
             // 确定文章状态
             $status = ($visibility === 'private') ? 'private' : 'publish';
 
+            $titleSource = empty(trim($content)) && !empty($linkCard['title'])
+                ? $linkCard['title']
+                : $content;
+
             // 插入文章到contents表
             $postData = [
-                'title' => $this->generateTitle($content),
+                'title' => $this->generateTitle($titleSource),
                 'slug' => $slug,
                 'created' => time(),
                 'modified' => time(),
@@ -601,6 +614,14 @@ class Action extends Widget implements ActionInterface {
             }
             if ($isAdvertise) {
                 $this->savePostField($insertId, 'isAdvertise', 'int', 1);
+            }
+            if (!empty($linkCard)) {
+                $this->savePostField(
+                    $insertId,
+                    'linkCard',
+                    'str',
+                    json_encode($linkCard, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                );
             }
 
             // 保存上传的文件记录
@@ -763,6 +784,57 @@ class Action extends Widget implements ActionInterface {
         }
 
         return $content . $mediaHtml;
+    }
+
+    /**
+     * 规范化链接卡片字段
+     */
+    private function normalizeLinkCard($json) {
+        if (empty($json)) {
+            return null;
+        }
+
+        $data = json_decode($json, true);
+        if (!is_array($data)) {
+            return null;
+        }
+
+        $title = $this->sanitizeCardText($data['title'] ?? '', 80);
+        if ($title === '') {
+            return null;
+        }
+
+        $icon = trim((string)($data['icon'] ?? ''));
+        $url = trim((string)($data['url'] ?? ''));
+
+        if (!$this->isAllowedCardUrl($icon)) {
+            throw new \Exception('链接卡片图标地址格式不正确');
+        }
+        if (!$this->isAllowedCardUrl($url)) {
+            throw new \Exception('链接卡片地址格式不正确');
+        }
+
+        return [
+            'icon' => $icon,
+            'title' => $title,
+            'description' => $this->sanitizeCardText($data['description'] ?? '', 160),
+            'url' => $url,
+            'link' => '#link-card'
+        ];
+    }
+
+    private function sanitizeCardText($value, $length) {
+        $value = trim(strip_tags((string)$value));
+        return mb_substr($value, 0, $length, 'UTF-8');
+    }
+
+    private function isAllowedCardUrl($url) {
+        if ($url === '') {
+            return true;
+        }
+
+        return (bool) filter_var($url, FILTER_VALIDATE_URL)
+            && (stripos($url, 'http://') === 0 || stripos($url, 'https://') === 0);
     }
 
     /**
@@ -1306,9 +1378,17 @@ class Action extends Widget implements ActionInterface {
      * 返回JSON响应
      */
     private function returnJson($data) {
-        $this->response->setStatus(200);
-        $this->response->setContentType('application/json');
-        echo json_encode($data);
+        if (ob_get_level()) {
+            ob_clean();
+        }
+        if ($this->response) {
+            $this->response->setStatus(200);
+            $this->response->setContentType('application/json');
+        } else {
+            http_response_code(200);
+            header('Content-Type: application/json');
+        }
+        echo json_encode($data, JSON_UNESCAPED_UNICODE);
         exit;
     }
 }
